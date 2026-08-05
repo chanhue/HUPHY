@@ -448,6 +448,89 @@ private이면: A) `set_protocol`로 MIT 전환 + 전원 재투입, 또는 B) `co
 | C | `hipz`/`hipy` 매핑이 뒤바뀜 | `robot.yaml`에서 7↔9, 1↔3 교체 |
 | D | `__init__.py` 조기 import로 순수 계층 테스트가 `python-can`을 요구 | PEP 562 `__getattr__` 지연 로딩 |
 | E | LeRobot `tables.py`의 `MotorType.O2` 값이 RS02 매뉴얼과 불일치 | 우리 `tables.py`를 `[프로토콜][모델]`로 인덱싱해 구조적으로 방지 |
+| F | **한계값이 하드스톱인데 `state` 여유를 바깥으로 더하고 있었다** | ↓ |
+| G | **한계를 넘는 명령을 버려서 다리 자세가 어긋났다** | ↓ |
+
+### F — 여유 방향이 잘못됨
+
+**발견**: 1단계 `limits.py` 작성 중
+
+원본 `state_in_bounds`가 여유를 **더했다**.
+
+```python
+return (lo - margin) <= deg <= (hi + margin)     # 한계 밖 5도까지 허용
+```
+
+이건 `limits`가 하드스톱보다 **안쪽**이라는 가정이다. 원본 주석도 그랬다:
+
+```python
+JOINT_LIMITS_DEG  # ... with margin before the physical hard-stop
+```
+
+**그런데 실측값은 하드스톱 그 자체다.** 그러면 하드스톱을 5도 넘어야 E-STOP인데
+물리적으로 불가능하니 **위치로는 E-STOP이 영원히 안 걸린다.**
+
+**수정** — 세 여유를 전부 하드스톱에서 **안쪽 방향**으로 통일:
+
+```
+하드스톱                                              하드스톱
+   |-1도-|--3도--|----8도----          ----|--|--|-------|
+   | state command  near_stop
+   | E-STOP 클리핑   감쇠전환
+```
+
+순서가 `state <= command <= near_stop`으로 바뀐다 (전부 안쪽 거리).
+원본의 `command <= state <= near_stop`은 `state`만 바깥 방향이라 애초에
+일관되지 않았다.
+
+E-STOP이 가장 바깥인 것은 역할이 다르기 때문이다 — `command` 클리핑은 **예방**,
+`state` E-STOP은 가드를 뚫었을 때의 **사후** 수단.
+
+부수 효과로 세 판정이 같은 형태가 되어 함수 하나로 합쳐졌다:
+```python
+within(deg, limits, margin_deg=cfg.state_deg)      # E-STOP 아님
+within(deg, limits, margin_deg=cfg.command_deg)    # 명령 허용
+within(deg, limits, margin_deg=cfg.near_stop_deg)  # 감쇠 아님
+```
+
+> 남은 확인: `near_stop = 8도`를 양쪽에 적용하면 m9 hipy(가동폭 73도)는
+> **22%가 감쇠 구간**이 된다. 좁은 관절엔 부담일 수 있다. 게인 튜닝하며
+> 실제로 걸리는지 보고 전역 여유를 줄이거나 관절별 여유를 둘지 정한다.
+
+### G — 거부 대신 클리핑
+
+**발견**: 같은 시점
+
+원본은 한계를 넘으면 **프레임을 아예 안 보냈다** (`return None` -> `continue`).
+
+**문제**: 6개 중 일부만 거부되면 그 모터만 직전 명령을 유지해 **다리 자세가
+어긋난다.** 발목처럼 2모터가 연동된 곳에서 특히 나쁘다 — a1만 거부되면
+pitch/roll이 엉뚱해진다.
+
+또 정책이 계속 범위 밖을 요구하면 조용히 멈춘 채이고, MIT 타임아웃이 켜져
+있으면 모터가 풀린다.
+
+**수정** — 클리핑할 대상이 있으면 자르고, 없으면 안 보낸다:
+
+| 사유 | 처리 | 왜 |
+|---|---|---|
+| 한계 초과 | **클리핑** | 한계까지는 갈 수 있다. 연속성 유지 |
+| 점프 과대 | **클리핑** | max_delta만큼만 = 속도 제한 |
+| 유효 상태 없음 | 전송 안 함 | 기준이 없어 클리핑 불가 |
+| 발목 IK 불가 | 전송 안 함 | 클리핑할 각도 자체가 없다 |
+| E-STOP | 전송 안 함 | 토크를 끊는 게 목적 |
+
+점프 클리핑이 특히 중요하다 — 거부하면 먼 목표에 **영영 도달 못 하고**,
+클리핑하면 `max_delta`씩 슬루해서 도달한다. LeRobot도 클리핑이다
+(`ensure_safe_goal_position`).
+
+클리핑은 **조용한 변조**이므로 `clamp()`가 `(값, 잘렸는지)`를 함께 돌려준다.
+텔레메트리 필드도 나눈다:
+
+```
+clips_limit   clips_jump                       잘렸다 (명령은 나감)
+rejects_nostate   rejects_ik   rejects_estop   안 보냈다
+```
 
 ---
 
