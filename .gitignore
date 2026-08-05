@@ -1,0 +1,15 @@
+# 참고용으로 클론해둔 외부 저장소 (HUPHY 커밋에 포함하지 않음)
+/lerobot/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.DS_Store
+
+# 런타임 산출물
+logs/

@@ -1,0 +1,62 @@
+# 로봇 토폴로지 + 안전 파라미터.
+#
+# 여기에는 "조립 구성"만 둔다. 벤더 사양(인코딩 범위, 명령 바이트)은
+# src/huphy/motors/robstride/tables.py 에, 실측값(sign/offset/limits/gains)은
+# config/calibration/*.json 에 있다.
+#
+# 모터 id <-> 관절 매핑: "7=hipz 8=hipx 9=hipy 10=knee"
+#
+#    원본 robot_constant.py는 주석과 코드가 서로 달랐다.
+#      주석 (상단 토폴로지, JOINT_LIMITS_DEG)  -> 7=hipz 8=hipx 9=hipy  <- 맞음
+#      코드 (_make_leg_specs, hip_knee_ids 언패킹) -> 7=hipy 8=hipx 9=hipz  <- 틀림
+#    즉 코드에서 hipz와 hipy가 뒤바뀌어 있었고, 그 상태로 set_leg_action(hipz=...)을
+#    부르면 모터 9가 움직였다. 여기서는 올바른 쪽(주석)을 따른다.
+
+name: huphy
+
+safety:
+  margins:
+    command_deg: 3.0      # 명령을 한계에서 이만큼 안쪽으로
+    state_deg: 5.0        # 측정값이 이만큼 넘으면 E-STOP
+    near_stop_deg: 8.0    # 이만큼 가까우면 감쇠 전용으로 전환
+  max_cmd_delta_deg: 50.0
+  damping_kd: 1.0
+  enforce_command_limits: true
+  reset_estop_each_state_cycle: true
+
+telemetry:
+  # host를 비워두면 UDP 송신 비활성. 환경변수 PJ_HOST / PJ_PORT로도 지정 가능.
+  host: null
+  port: 9870
+  csv_path: ../logs/leg.csv
+  csv_flush_every: 50          # N사이클마다 flush (E-STOP 시에는 즉시)
+  joint_field_decimation: 1    # 관절공간 필드를 N사이클마다 (발목 FK 비용)
+
+legs:
+  right:
+    channel: can1
+    interface: socketcan
+    control_hz: 100.0
+    rom_scale: 0.3
+    calibration: calibration/right_leg.json
+    motors:
+      - {id: 7,  role: hipz,     model: RS02}
+      - {id: 8,  role: hipx,     model: RS02}
+      - {id: 9,  role: hipy,     model: RS02}
+      - {id: 10, role: knee,     model: RS02}
+      - {id: 11, role: ankle_a1, model: RS00}
+      - {id: 12, role: ankle_a2, model: RS00}
+
+  left:
+    channel: can0
+    interface: socketcan
+    control_hz: 100.0
+    rom_scale: 0.3
+    calibration: calibration/left_leg.json
+    motors:
+      - {id: 1, role: hipz,     model: RS02}
+      - {id: 2, role: hipx,     model: RS02}
+      - {id: 3, role: hipy,     model: RS02}
+      - {id: 4, role: knee,     model: RS02}
+      - {id: 5, role: ankle_a1, model: RS00}
+      - {id: 6, role: ankle_a2, model: RS00}

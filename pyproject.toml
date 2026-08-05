@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "huphy"
+version = "0.1.0"
+description = "Bipedal robot leg control over CAN (RobStride / MIT protocol)"
+requires-python = ">=3.9"
+dependencies = [
+    "python-can>=4.0",
+    "numpy>=1.21",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+huphy-bringup = "huphy.scripts.bringup:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

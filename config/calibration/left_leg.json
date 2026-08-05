@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "note": "왼쪽 다리. 아직 연결되지 않았고 전부 미실측이다. 원본 robot_constant의 왼쪽 한계값은 플레이스홀더(-45~45 등 둥근 수)였으므로 옮기지 않았다 -- 실측 전까지 limit을 비워두면 한계 검사가 통과해버리는 것이 아니라, is_complete()가 False가 되어 제어 진입 자체가 막힌다.",
+  "motors": {
+    "1": {"sign": 1.0, "offset_deg": 0.0, "limit_lo_deg": null, "limit_hi_deg": null, "kp": 0.0, "kd": 0.0, "zero_reference": ""},
+    "2": {"sign": 1.0, "offset_deg": 0.0, "limit_lo_deg": null, "limit_hi_deg": null, "kp": 0.0, "kd": 0.0, "zero_reference": ""},
+    "3": {"sign": 1.0, "offset_deg": 0.0, "limit_lo_deg": null, "limit_hi_deg": null, "kp": 0.0, "kd": 0.0, "zero_reference": ""},
+    "4": {"sign": 1.0, "offset_deg": 0.0, "limit_lo_deg": null, "limit_hi_deg": null, "kp": 0.0, "kd": 0.0, "zero_reference": ""},
+    "5": {"sign": 1.0, "offset_deg": 0.0, "limit_lo_deg": null, "limit_hi_deg": null, "kp": 0.0, "kd": 0.0, "zero_reference": ""},
+    "6": {"sign": 1.0, "offset_deg": 0.0, "limit_lo_deg": null, "limit_hi_deg": null, "kp": 0.0, "kd": 0.0, "zero_reference": ""}
+  }
+}
