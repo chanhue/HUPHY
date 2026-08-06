@@ -3,11 +3,19 @@
 ```
 robstride/
 ├── tables.py   벤더 사양 (데이터시트에서 오는 값)
-└── codec/
-    └── mit.py  MIT 표준 프레임 인코딩/디코딩
+├── codec/
+│   └── mit.py  MIT 표준 프레임 인코딩/디코딩
+└── bus.py      런타임 조작
 ```
 
-둘 다 순수 계산임. `python-can` 없이 import되고 테스트됨.
+`tables` 와 `codec` 은 순수 계산임. `python-can` 없이 import되고 테스트됨.
+`bus` 는 전송 계층을 쓰므로 `__init__.py` 에서 내보내지 않음 — 이 패키지를
+import하는 것만으로 `python-can` 이 필요해지지 않게 함.
+
+```python
+from huphy.motors.robstride import tables            # python-can 불필요
+from huphy.motors.robstride.bus import RobStrideBus  # 여기서만 필요
+```
 
 출처: RS02 User Manual (Seeed Studio 배포판 251112). 각 값의 페이지를 주석에 명시함.
 
@@ -203,10 +211,113 @@ float_to_uint(nan, -12.57, 12.57, 16)    # 65535 = 720°
 
 ---
 
+## `bus.py`
+
+`base.py` 의 `MotorsBus` 계약, `codec/mit.py`, `canbus.py` 를 잇는 곳임.
+
+각도는 전부 **raw 공간**이고 관절 이름은 모름 — 모터 id 로만 말함. cal 변환과 관절
+이름은 `robots/` 가 함.
+
+### 상태는 명령의 응답으로 옴
+
+MIT 모드에는 **"상태 읽기" 명령이 따로 없음.** 모터는 동작 명령을 받으면 응답으로
+현재 상태를 돌려줌.
+
+그래서 움직이지 않고 상태만 보려면 게인과 토크가 0인 명령을 보냄.
+
+```
+tau = kp*(목표각 - 현재각) + kd*(0 - 현재속도) + 토크_FF
+    =  0*(...)          +  0*(...)          + 0
+    =  0
+```
+
+토크가 0이니 아무 일도 일어나지 않고 응답만 옴. 이것이 `PASSIVE` 임.
+
+### 전송과 수거를 나눠 둠
+
+| | |
+|---|---|
+| `send_mit(commands)` | 보내기만. 보낸 개수 반환 |
+| `collect(expect=)` | 수거만. **응답이 없었던 모터 id** 반환 |
+| `refresh_states(motors=)` | 둘 다 (`MotorsBus` 계약) |
+
+버스가 둘일 때 "왼다리 보내기 → 오른다리 보내기 → 왼다리 수거 → 오른다리 수거"
+순서를 짜려면 나뉘어 있어야 함 (이슈 #10).
+
+**`refresh_states` 는 제어 루프에서 쓰지 않음.** 이미 보낸 명령의 응답을
+`collect()` 로 받으면 되므로 프레임을 두 배로 보낼 이유가 없음. 토크를 넣기 전에
+다리 위치를 볼 때 씀.
+
+### `MitCommand`
+
+```python
+MitCommand(position_deg=45.0, velocity_deg_s=0.0, kp=30.0, kd=1.0, torque_nm=0.0)
+```
+
+다섯 값을 튜플로 넘기지 않는 이유: 전부 `float` 이라 **순서를 틀려도 조용히
+통과함.** `kp` 자리에 위치가 들어가면 `kp=45` 가 되어 모터가 전력으로 튐.
+
+`position_deg` 는 raw 공간임.
+
+### 모터별 인코딩 표
+
+다리에 RS02 4개와 RS00 2개가 섞여 있고 토크 범위가 다름(17 vs 14 N·m). **같은
+바이트가 모터마다 다른 토크를 뜻함.**
+
+응답을 해석할 때 모터 id 를 프레임 안(`data[0]`)에서 꺼냄 — CAN 중재 id 는 모델을
+알려주지 않음.
+
+모델 문자열을 벤더 enum 으로 옮기는 곳이 **생성자 하나**임. 여기서 걸러 두면 제어
+중에 오타가 드러나는 일이 없음.
+
+```
+m1: 모르는 모델 'RS99'. 가용: ['RS00', 'RS02']
+```
+
+### `disconnect` 가 토크를 먼저 끊음
+
+순서가 반대면 채널이 닫힌 뒤라 정지 명령을 보낼 방법이 없어짐. 모터는 마지막
+명령을 유지하므로 사람이 전원을 뽑을 때까지 힘을 씀.
+
+**차단이 실패해도 채널은 반드시 닫음.** 여기서 예외를 올리면 정리가 중간에 멈춰
+소켓이 열린 채로 남고, 다음 실행 때 채널을 못 엶.
+
+### `read_fault` 가 큐를 먼저 비움
+
+고장 응답은 일반 상태 프레임과 **CAN ID 가 같아** 구분되지 않음. 묵은 프레임이 남아
+있으면 그걸 고장값으로 읽음.
+
+`F_CMD` 도 조회용(`0x00`)을 씀 — `0xFF` 면 클리어라서 **조회하려다 원인을 지움.**
+
+응답이 없으면 `None`, 정상이면 `ok=True` 임. 둘은 다름.
+
+### 한계를 검사하지 않음
+
+`send_mit` 은 값을 그대로 보냄. 한계는 `safety.guards` 가 cal 공간에서 이미 함.
+
+같은 검사를 두 군데 두면 한쪽만 고쳐졌을 때 어느 쪽이 맞는지 알 수 없음.
+
+### 여기 없는 것
+
+CAN id 변경, 프로토콜 전환, 기계영점, 플래시 저장은 `commissioning.py` 로 감.
+되돌리기 어렵고 한 번만 하는 조작이라, 제어 루프에서 부를 수 있는 자리에 두지 않음.
+
+---
+
+## 테스트
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/test_codec.py tests/test_robstride_bus.py -q
+```
+
+`codec` 31개, `bus` 40개. 둘 다 하드웨어 없이 돌아감 — 자세한 내용은
+[tests/README.md](../../../../tests/README.md) 참조.
+
+---
+
 ## 미구현
 
 | 파일 | 용도 | 필요해지는 시점 |
 |---|---|---|
-| `bus.py` | 런타임 통신 | 3단계 |
-| `commissioning.py` | 영점·CAN ID·프로토콜 전환 | 4단계 |
-| `codec/private.py` | 29-bit 확장 프레임 | 프로토콜이 private으로 확인되면 |
+| `commissioning.py` | 영점·CAN ID·프로토콜 전환·플래시 저장 | 4단계 |
+| `codec/private.py` | 29-bit 확장 프레임 | private 프로토콜을 쓰게 되면 |
