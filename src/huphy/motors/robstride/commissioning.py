@@ -93,7 +93,8 @@ def set_zero(bus: RobStrideBus, motor_id: int, *, zero_reference: str) -> None:
     `offset` 실측이 무의미해짐.
 
     반환하지 않고 문자열만 받는 이유: 이 값은 `MotorCalibration.zero_reference` 로
-    가는 것이고, 캘리브레이션 파일을 쓰는 것은 5단계의 일임.
+    가는 것이고, 파일에 쓰는 것은 `calibration.store` 가 함. 여기는 모터에 명령을
+    보내는 것까지만 함.
 
     **토크가 켜져 있으면 거부함.** 영점을 잡는 순간 모터의 좌표계가 통째로 옮겨가는데
     직전 명령의 목표각은 옛 좌표계 값임. 그대로 유지되면 그 차이만큼 관절이 튐.

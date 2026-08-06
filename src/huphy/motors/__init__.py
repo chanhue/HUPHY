@@ -3,7 +3,7 @@
     base.py       벤더 중립 자료형과 인터페이스. 순수 파이썬
     robstride/    RobStride 드라이버
 
-`base` 는 `python-can` 없이 import됨. 버스 구현(`canbus.py`)은 3단계에서 추가함.
+`base` 는 `python-can` 없이 import됨. 전송은 `canbus.py` 가 맡음.
 """
 
 from . import base

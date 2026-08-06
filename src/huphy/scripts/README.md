@@ -211,8 +211,8 @@ python -m huphy.scripts.bringup --limb right_leg
 python -m huphy.scripts.bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
 ```
 
-설정·실측값·버스·기구학·안전·텔레메트리·제어 루프를 한데 묶어 씀. 지금까지 만든
-것이 전부 여기서 만남.
+설정·실측값·버스·기구학·안전·텔레메트리·제어 루프를 한데 묶어 씀. **모든 계층이
+여기서 만나는 유일한 곳임.**
 
 ### 메뉴
 

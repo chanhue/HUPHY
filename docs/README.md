@@ -31,8 +31,8 @@ flow_diagrams.md              그림으로 확인
 
 | 위치 | 내용 |
 |---|---|
-| [`src/huphy/README.md`](../src/huphy/README.md) | 패키지 개요, 의존 그래프 |
-| `src/huphy/*/README.md` | 폴더별 구성요소·호출 관계 (9개) |
+| [`README.md`](../README.md) | 계층 구조, 호출 관계, 계층별 설계 근거 |
+| `src/huphy/*/README.md` | 폴더별 구성요소·호출 관계 |
 | [`config/README.md`](../config/README.md) | yaml/json 작성법, 측정 방법 |
 | [`tests/README.md`](../tests/README.md) | 테스트가 고정하는 것 |
 
