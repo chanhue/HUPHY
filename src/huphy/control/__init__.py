@@ -1,0 +1,15 @@
+"""제어 계층.
+
+    loop.py      정해진 주기로 한 사이클씩 돌림
+    motions.py   매 주기 무엇을 시킬지 정함
+
+둘을 나눈 이유: 루프는 주기와 안전만 보고, 무엇을 시킬지는 동작이 정함. 같은 루프로
+유지·계단·사인파·보행 궤적을 다 돌릴 수 있고, 동작은 하드웨어 없이 시험됨.
+
+`motions` 는 순수 함수라 의존이 없음. `loop` 는 로봇을 받으므로 경로를 명시해 가져감.
+"""
+
+from . import motions
+from .loop import ControlLoop, LoopStats, Mode, Motion
+
+__all__ = ["motions", "ControlLoop", "LoopStats", "Mode", "Motion"]

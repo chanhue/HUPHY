@@ -13,7 +13,8 @@ tests/
 ├── test_commission_cli.py  scripts/commission.py       30개
 ├── test_ankle.py           kinematics/ankle.py        149개
 ├── test_leg.py             robots/leg.py               42개
-└── test_telemetry.py       telemetry/                  43개
+├── test_telemetry.py       telemetry/                  43개
+└── test_control.py         control/                    40개
 ```
 
 ## 실행
@@ -23,9 +24,9 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-........................................................................ [ 87%]
-.....................................................................    [100%]
-573 passed in 3.41s
+........................................................................ [ 93%]
+.....................................                                    [100%]
+613 passed in 3.61s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -209,6 +210,17 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬화와 반올림이 실제로
 왕복하는지 확인함.
 
+### `test_control.py` — 40개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestMotions` | 13 | 순수 함수. 하드웨어 없이 그냥 부름 |
+| `TestMode` | 6 | 관찰이 토크를 끊고 시작, 관찰도 읽음 |
+| `TestShutdown` | 6 | hold 후 토크 차단, 예외 중에도 |
+| `TestTiming` | 7 | 주기 측정, 꾸준한 느림 |
+| `TestTelemetryHookup` | 5 | 기록 실패가 루프를 안 멈춤 |
+| `TestStep` | 2 | 한 걸음씩 |
+
 ---
 
 ## 하드웨어 없이 어떻게 확인하나
@@ -254,6 +266,7 @@ def send(self, msg):
 | 모터가 실제로 응답하는지 | 실물 |
 | 게인 값이 적절한지 | 실물 |
 | `zero_sta` 가 켜져 있는지 | 실물 |
+| 실제 제어 주기가 유지되는지 | 실물 (`time.sleep` 정밀도와 부하에 달림) |
 
 ---
 
@@ -538,6 +551,21 @@ MIT 모드는 명령을 받으면 반드시 답함. 안 오면 그 모터가 처
 ### `test_close_flushes`
 
 버퍼에 남은 몇 줄이 사라지면 하필 사고 직전 부분을 잃음.
+
+### `test_observe_still_reads` — 관찰도 통신함
+
+MIT 프로토콜에는 읽기 전용 명령이 없음. 아무것도 보내지 않으면 아무것도 오지 않음.
+관찰 모드는 힘이 나가지 않는 명령을 보내고 그 응답을 받음.
+
+### `test_exception_still_cuts_torque`
+
+제어 중 예외가 나면 모터가 마지막 명령을 계속 유지함. 자세 유지가 실패해도 토크는
+반드시 끊김.
+
+### `test_kept_up_flags_a_sustained_shortfall`
+
+`overruns` 는 튀는 주기를 세지만 **꾸준히 느린 것은 못 잡음** — 매 주기 24%씩
+넘으면 한 번도 밀림으로 세지 않으면서 주파수만 떨어짐.
 
 ### `test_all_keys_always_present`
 

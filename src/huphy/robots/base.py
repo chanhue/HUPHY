@@ -154,6 +154,16 @@ class Robot(abc.ABC):
     def collect(self) -> Tuple[int, ...]:
         """응답을 수거해 상태를 갱신함. **응답이 없었던 모터 id** 를 반환함."""
 
+    @abc.abstractmethod
+    def refresh(self) -> Tuple[int, ...]:
+        """명령하지 않고 상태만 읽음. 응답이 없었던 모터 id 를 반환함.
+
+        **읽기 전용 통신이 아닐 수 있음.** MIT 프로토콜에는 상태 읽기 명령이 따로
+        없어서, 힘이 나가지 않는 명령을 보내고 그 응답을 받는 방식임.
+
+        관찰 모드가 이것을 씀. 아무것도 보내지 않으면 아무것도 오지 않음.
+        """
+
     def send_action(self, action: Action) -> Dict[str, float]:
         """계산·전송·수거를 한 번에. **실제로 나간 명령**을 관절 이름으로 돌려줌.
 

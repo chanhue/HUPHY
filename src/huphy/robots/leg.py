@@ -172,8 +172,7 @@ class Leg(Robot):
 
     def connect(self) -> None:
         self.bus.connect()
-        self._awaiting = tuple(self.config.motor_ids)
-        self._note_link(self.bus.refresh_states())
+        self.refresh()
 
     def disconnect(self) -> None:
         self.bus.disconnect()
@@ -381,6 +380,19 @@ class Leg(Robot):
         """
         self._awaiting = tuple(commands)
         return self.bus.send_mit(dict(commands))
+
+    def refresh(self) -> Tuple[int, ...]:
+        """명령하지 않고 상태만 읽음. 응답이 없었던 모터 id 를 반환함.
+
+        게인과 토크가 0인 명령을 보내고 그 응답을 받음 — MIT 모드에는 읽기 전용
+        명령이 없음. 토크가 0이라 아무 일도 일어나지 않음.
+
+        관찰 모드와 시작 직전에 씀.
+        """
+        self._awaiting = tuple(self.config.motor_ids)
+        missing = self.bus.refresh_states()
+        self._note_link(missing)
+        return tuple(missing)
 
     def collect(self) -> Tuple[int, ...]:
         """응답을 수거함. **직전에 명령한 모터만** 기다림."""
