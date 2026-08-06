@@ -9,8 +9,11 @@
 sudo ip link set can1 up type can bitrate 1000000
 
 python -m huphy.scripts.commission --limb right_leg scan
-python -m huphy.scripts.bringup --limb right_leg
+python -m huphy.scripts.bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
 ```
+
+**처음 만질 때는 두 플래그가 필요함.** 게인이 아직 0이라 `--allow-uncalibrated`
+없이는 토크가 나가는 항목이 거부되고, `--gain-scale` 로 낮춰 시작하는 것이 안전함.
 
 ---
 
@@ -104,6 +107,10 @@ pip install -e ".[dev]"   # + pytest
 4  사인파                 추종 지연과 진폭 감쇠
 ```
 
+찾은 값은 `config/robot.yaml` 의 `kp`/`kd` 에 적음. 무엇을 보고 어떻게 판단하는지는
+[`control/README.md`](src/huphy/control/README.md) 와
+[`docs/monitoring.md`](docs/monitoring.md).
+
 ---
 
 ## 조정해야 할 값
@@ -151,18 +158,19 @@ pip install -e ".[dev]"   # + pytest
 
 ## 지금 무엇이 비어 있나
 
-| | 무엇이 막히나 |
-|---|---|
-| **게인 미실측** (`kp = 0`) | 토크가 안 나감. 다리가 안 움직임 |
-| **영점 미실측** (`zero_reference` 비어 있음) | `cal` 이 `raw` 와 같음. 좌표계가 없는 것과 같음 |
-| **모터 매핑 미확인** | 명령한 관절이 아닌 것이 움직일 수 있음 |
-| **발목 기하 출처 미확인** | 어느 다리 것인지 모름. 반대쪽은 계산으로 만든 거울상 |
-| **왼다리 한계 없음** | 왼다리는 제어 진입이 막힘 |
+| | 무엇이 막히나 | 어디서 채우나 |
+|---|---|---|
+| **게인 미실측** (`kp = 0`) [#9] | 토크가 안 나감. 다리가 안 움직임 | `bringup` 으로 튜닝 |
+| **영점 미실측** (`zero_reference` 비어 있음) [#9] | `cal` 이 `raw` 와 같음. 좌표계가 없는 것과 같음 | `commission zero` |
+| **모터 매핑 미확인** [#8] | 명령한 관절이 아닌 것이 움직일 수 있음 | `commission nudge` |
+| **발목 기하 출처 미확인** [#13] | 어느 다리 것인지 모름. 반대쪽은 계산으로 만든 거울상 | 발 각도를 재서 |
+| **왼다리 한계 없음** [#9] | 왼다리는 제어 진입이 막힘 | 도면에서 옮겨 적음 |
+| **전제를 코드로 못 읽음** [#11] | `zero_sta` 와 프로토콜을 확인할 방법이 없음 | 외부 도구로 대체 중 |
 
 **전부 실물이 있어야 채워지는 것들임.** 코드로 할 수 있는 것은 다 되어 있고,
 `--allow-uncalibrated` 로 넘겨야 실측을 시작할 수 있음.
 
-목록과 근거는 [`docs/issues.md`](docs/issues.md).
+번호와 근거는 [`docs/issues.md`](docs/issues.md).
 
 ---
 
