@@ -1,13 +1,37 @@
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "limb": "right_leg",
   "note": "오른다리 실측값. 조립을 재서 얻는 것만 담음 -- sign, offset_deg, zero_reference. 한계와 게인은 재는 값이 아니라 적는 값이라 robot.yaml 에 있음 (이슈 #2). 관절 이름으로 키를 맞춤: CAN id 는 바뀔 수 있지만 관절 자리는 그대로임. sign/offset 은 아직 미실측이라 항등변환이고, 이 상태에서는 cal 공간과 raw 공간이 같은 숫자임.",
   "motors": {
-    "hipz":     {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
-    "hipx":     {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
-    "hipy":     {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
-    "knee":     {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
-    "ankle_a1": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
-    "ankle_a2": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""}
+    "hipz": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": ""
+    },
+    "hipx": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": ""
+    },
+    "hipy": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": ""
+    },
+    "knee": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": ""
+    },
+    "ankle_a1": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": ""
+    },
+    "ankle_a2": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": ""
+    }
   }
 }

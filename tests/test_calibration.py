@@ -91,18 +91,19 @@ class TestLoadRejects:
         with pytest.raises(CalibrationError, match="JSON 을 읽을 수 없음"):
             cal.load(p)
 
-    def test_old_schema_version(self, write):
-        """버전 1은 한계와 게인을 함께 담고 모터 id 로 키를 잡았음.
+    def test_mismatched_schema_version(self, write):
+        """형식이 맞지 않는 파일을 조용히 읽으면 항목이 무시됨.
 
-        조용히 읽으면 한계가 두 군데 있게 되고, 어느 쪽이 쓰이는지 알 수 없음.
+        그 관절만 항등변환으로 돌게 되는데, sign 이 반대인 관절이 그렇게 되면
+        목표에서 멀어지는 방향으로 토크가 걸림.
         """
         with pytest.raises(CalibrationError, match="schema_version"):
-            cal.load(write(payload(schema_version=1)))
+            cal.load(write(payload(schema_version=99)))
 
-    def test_error_says_what_changed(self, write):
-        """무엇을 고쳐야 하는지 알려줘야 옮길 수 있음."""
-        with pytest.raises(CalibrationError, match="robot.yaml 로 옮기고"):
-            cal.load(write(payload(schema_version=1)))
+    def test_error_says_what_is_expected(self, write):
+        """무엇을 기대하는지 알려줘야 고칠 수 있음."""
+        with pytest.raises(CalibrationError, match="이 코드는 1 을 읽음"):
+            cal.load(write(payload(schema_version=99)))
 
     def test_limits_key_is_rejected(self, write):
         """한계는 적는 값이라 robot.yaml 에 있음 (이슈 #2).

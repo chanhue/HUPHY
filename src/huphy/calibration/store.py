@@ -35,8 +35,12 @@ from ..motors.base import MotorCalibration
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
-"""1 -> 2 에서 한계와 게인이 빠지고 키가 모터 id 에서 관절 이름으로 바뀜."""
+SCHEMA_VERSION = 1
+"""파일 형식 번호.
+
+형식이 바뀌면 올림. 읽을 때 대조해서, 코드가 기대하는 것과 다른 파일을 조용히
+읽어 들이지 않게 함 -- 항목 하나가 무시되면 그 관절만 항등변환으로 돎.
+"""
 
 ENTRY_KEYS = {"sign", "offset_deg", "zero_reference"}
 FILE_KEYS = {"schema_version", "limb", "note", "motors"}
@@ -103,9 +107,9 @@ def load(path: "str | Path") -> Dict[str, MotorCalibration]:
     version = data.get("schema_version")
     if version != SCHEMA_VERSION:
         raise CalibrationError(
-            f"{p}: schema_version 이 {version!r} 임 (기대 {SCHEMA_VERSION}). "
-            f"버전 1은 한계와 게인을 함께 담고 모터 id 로 키를 잡았음 -- "
-            f"한계는 robot.yaml 로 옮기고 키를 관절 이름으로 바꿀 것"
+            f"{p}: schema_version 이 {version!r} 임. 이 코드는 {SCHEMA_VERSION} 을 읽음. "
+            f"형식이 맞지 않는 파일을 읽으면 항목이 조용히 무시되어 그 관절만 "
+            f"항등변환으로 돎"
         )
 
     motors = data.get("motors")

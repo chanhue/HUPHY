@@ -187,7 +187,7 @@ ConfigError: limbs.right_leg: 모르는 키 ['contorl_hz']
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "limb": "right_leg",
   "note": "사람이 남기는 메모",
   "motors": {
