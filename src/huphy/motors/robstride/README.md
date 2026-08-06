@@ -2,19 +2,21 @@
 
 ```
 robstride/
-├── tables.py   벤더 사양 (데이터시트에서 오는 값)
+├── tables.py         벤더 사양 (데이터시트에서 오는 값)
 ├── codec/
-│   └── mit.py  MIT 표준 프레임 인코딩/디코딩
-└── bus.py      런타임 조작
+│   └── mit.py        MIT 표준 프레임 인코딩/디코딩
+├── bus.py            런타임 조작
+└── commissioning.py  조립할 때 한 번 하는 조작
 ```
 
 `tables` 와 `codec` 은 순수 계산임. `python-can` 없이 import되고 테스트됨.
-`bus` 는 전송 계층을 쓰므로 `__init__.py` 에서 내보내지 않음 — 이 패키지를
-import하는 것만으로 `python-can` 이 필요해지지 않게 함.
+`bus` 와 `commissioning` 은 전송 계층을 쓰므로 `__init__.py` 에서 내보내지 않음 —
+이 패키지를 import하는 것만으로 `python-can` 이 필요해지지 않게 함.
 
 ```python
-from huphy.motors.robstride import tables            # python-can 불필요
-from huphy.motors.robstride.bus import RobStrideBus  # 여기서만 필요
+from huphy.motors.robstride import tables                      # python-can 불필요
+from huphy.motors.robstride.bus import RobStrideBus            # 여기서만 필요
+from huphy.motors.robstride import commissioning
 ```
 
 출처: RS02 User Manual (Seeed Studio 배포판 251112). 각 값의 페이지를 주석에 명시함.
@@ -304,14 +306,104 @@ CAN id 변경, 프로토콜 전환, 기계영점, 플래시 저장은 `commissio
 
 ---
 
+## `commissioning.py`
+
+**조립할 때 한 번 하는 조작.** 제어 루프에서 쓰는 것이 하나도 없음.
+
+`bus.py` 와 파일을 나눈 이유: 여기 있는 것은 전부 **되돌리기 어려움.**
+
+| 조작 | 무엇이 남나 |
+|---|---|
+| 기계 영점 | 모터에 저장됨. 전원 재투입 후에도 남음 |
+| CAN id 변경 | 주소가 바뀌어 옛 id 로는 말을 걸 수 없음 |
+| 프로토콜 전환 | 전원을 재투입해야 적용됨 |
+
+`MotorsBus` 계약에 이것들이 없으므로 제어 코드에서는 **부를 방법 자체가 없음.**
+
+### 담긴 것
+
+| | |
+|---|---|
+| `set_control_mode` | 제어 모드 (Command 6). 즉시 적용 |
+| `set_zero` | 지금 자세를 기계 영점으로 (Command 4) |
+| `set_can_id` | CAN id 변경 (Command 7) |
+| `set_protocol` | 프로토콜 전환 (Command 8) |
+| `nudge` | 조금 움직였다 되돌림. 어느 관절인지 확인용 |
+| `scan` | 응답하는 모터 id 수집 |
+
+### 한 모터씩만 처리함
+
+여러 개를 연속으로 바꾸다 중간에 실패하면 **어느 것이 옛 상태이고 어느 것이 새
+상태인지 알 수 없음.** CAN id 가 겹치면 응답이 충돌해 구분조차 안 됨.
+
+영점은 자세를 잡아 놓고 하나씩 하는 작업이기도 함.
+
+### `set_zero` 가 메모를 필수로 받음
+
+```python
+set_zero(bus, 10, zero_reference="다리 편 상태, 발바닥 평면 접촉")
+```
+
+모터는 영점 값을 저장하지만 **"그때 다리가 어떤 자세였는지" 는 어디에도 남지
+않음.** 이 메모가 없으면 영점을 재현할 수 없고, 재현할 수 없으면 `offset` 실측이
+무의미해짐.
+
+### `set_zero` 가 토크 켜진 상태를 거부함
+
+영점을 잡으면 모터의 좌표계가 통째로 옮겨감. 그런데 직전 명령의 목표각은 **옛
+좌표계 값**임. 그대로 유지되면 그 차이만큼 관절이 튐.
+
+### `set_can_id` 가 새 id 로 응답을 확인함
+
+상태 프레임에는 모터 id 가 실리므로 이것만은 확인 가능함. 실패하면 **양쪽 id 로
+다시 확인하라고 알림** — 반영됐는데 응답만 놓쳤을 수 있음.
+
+### `nudge` 는 현재 위치 기준 상대 이동
+
+이 시점에는 캘리브레이션이 없어 **cal 공간이 존재하지 않음.** 따라서
+`Motor.limits_deg` 를 적용할 수 없고, 지금 있는 자리에서 조금 움직이는 것만
+안전하게 할 수 있음.
+
+```
+진폭 20도 상한      확인용이지 동작용이 아님
+기본 kp=5           걸리면 못 움직이고 마는 편이 나음
+PASSIVE 후 정지     바로 끊으면 관절이 떨어짐
+finally 토크 차단    중단해도 힘이 빠짐
+```
+
+호출 전에 다리를 받쳐 둘 것. 중력을 이길 만큼의 게인이 아니므로 무릎처럼 하중을
+받는 관절은 지지 없이는 움직이지 않거나 처짐.
+
+### MIT 표준 프레임으로 되는 것만 있음
+
+파라미터 읽기·쓰기(`PARAM_PROTOCOL_FLAG`, `PARAM_ZERO_STA`)는 private type 17/18 로
+접근하므로 **29-bit 확장 프레임이 필요함.** 여기 없음.
+
+즉 하드웨어 전제를 코드로 확인할 수 없고, 지금은 외부 도구로 확인함 (이슈 #11).
+
+---
+
+## 터미널에서 쓰기
+
+```bash
+python -m huphy.scripts.commission --limb right_leg scan
+python -m huphy.scripts.commission --limb right_leg nudge knee --delta 5
+```
+
+설정 파일에서 모터 목록을 읽으므로 모터 id 를 손으로 적지 않음.
+[scripts/README.md](../../scripts/README.md) 참조.
+
+---
+
 ## 테스트
 
 ```bash
-PYTHONPATH=src python3 -m pytest tests/test_codec.py tests/test_robstride_bus.py -q
+PYTHONPATH=src python3 -m pytest tests/test_codec.py tests/test_robstride_bus.py \
+                                tests/test_commissioning.py -q
 ```
 
-`codec` 31개, `bus` 40개. 둘 다 하드웨어 없이 돌아감 — 자세한 내용은
-[tests/README.md](../../../../tests/README.md) 참조.
+`codec` 31개, `bus` 40개, `commissioning` 33개. 전부 하드웨어 없이 돌아감 —
+자세한 내용은 [tests/README.md](../../../../tests/README.md) 참조.
 
 ---
 
@@ -319,5 +411,4 @@ PYTHONPATH=src python3 -m pytest tests/test_codec.py tests/test_robstride_bus.py
 
 | 파일 | 용도 | 필요해지는 시점 |
 |---|---|---|
-| `commissioning.py` | 영점·CAN ID·프로토콜 전환·플래시 저장 | 4단계 |
-| `codec/private.py` | 29-bit 확장 프레임 | private 프로토콜을 쓰게 되면 |
+| `codec/private.py` | 29-bit 확장 프레임. 파라미터 읽기·쓰기 | 이슈 #11 을 해소할 때 |

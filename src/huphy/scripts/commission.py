@@ -23,7 +23,7 @@ CAN 채널에 있으므로, 잘못 고르면 **엉뚱한 다리가 움직임.**
 
 ## 되돌리기 어려운 것은 --yes 를 요구함
 
-    zero        기계 영점. 플래시에 저장됨
+    zero        기계 영점. 전원 재투입 후에도 남음
     can-id      CAN id 변경
     protocol    프로토콜 전환. 전원 재투입 필요
 
@@ -50,7 +50,7 @@ from ..motors.robstride.bus import RobStrideBus
 CONFIG_NAME = "config/robot.yaml"
 
 DANGEROUS = {
-    "zero": "기계 영점을 지금 자세로 잡음. 플래시에 저장되고 좌표계가 통째로 옮겨감.",
+    "zero": "기계 영점을 지금 자세로 잡음. 모터에 저장되고 좌표계가 통째로 옮겨감.",
     "can-id": "CAN id 를 바꿈. 바꾼 뒤 robot.yaml 도 고쳐야 함.",
     "protocol": "프로토콜을 바꿈. 전원을 재투입해야 적용되고 그 뒤에는 프레임 포맷이 달라짐.",
 }

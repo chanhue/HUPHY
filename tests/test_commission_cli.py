@@ -282,7 +282,7 @@ class TestDangerous:
         assert FakeBus.instances == []
 
     def test_explains_what_will_happen(self, run):
-        with pytest.raises(SystemExit, match="플래시에 저장"):
+        with pytest.raises(SystemExit, match="모터에 저장"):
             run("--limb", "right_leg", "zero", "knee", "--note", "편 상태")
 
 

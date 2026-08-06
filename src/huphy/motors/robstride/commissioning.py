@@ -82,7 +82,10 @@ def set_control_mode(
 
 
 def set_zero(bus: RobStrideBus, motor_id: int, *, zero_reference: str) -> None:
-    """지금 자세를 기계 영점으로 잡음 (Command 4). **플래시에 저장됨.**
+    """지금 자세를 기계 영점으로 잡음 (Command 4). **전원 재투입 후에도 남음.**
+
+    실물에서 확인함 — 영점을 잡고 전원을 끊었다 켜도 유지됨. 그래서 이 조작이
+    시작 절차가 아니라 커미셔닝에 속함.
 
     `zero_reference` 는 어느 자세에서 잡았는지 사람이 남기는 메모임. 필수 인자로 둔
     이유: 모터는 영점 값을 저장하지만 **"그때 다리가 어떤 자세였는지" 는 어디에도

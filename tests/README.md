@@ -2,11 +2,15 @@
 
 ```
 tests/
-├── test_safety.py         safety/               42개  (294줄)
-├── test_codec.py          robstride 사양·코덱    31개  (218줄)
-├── test_base.py           motors/base.py        42개  (382줄)
-├── test_canbus.py         motors/canbus.py      33개  (369줄)
-└── test_robstride_bus.py  robstride/bus.py      40개  (420줄)
+├── test_safety.py          safety/                     42개
+├── test_codec.py           robstride 사양·코덱          31개
+├── test_base.py            motors/base.py              42개
+├── test_canbus.py          motors/canbus.py            33개
+├── test_robstride_bus.py   robstride/bus.py            40개
+├── test_commissioning.py   robstride/commissioning.py  33개
+├── test_config.py          config/                     45개
+├── test_calibration.py     calibration/                35개
+└── test_commission_cli.py  scripts/commission.py       30개
 ```
 
 ## 실행
@@ -16,16 +20,18 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-........................................................................ [ 38%]
-........................................................................ [ 76%]
-............................................                             [100%]
-188 passed in 0.12s
+........................................................................ [ 87%]
+...........................................                              [100%]
+331 passed in 2.97s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
 
 순수 계산 계층은 애초에 `python-can` 을 쓰지 않고, 전송 계층은 `import can` 이
 함수 안에 있어 가짜 모듈로 갈아끼울 수 있음.
+
+설정과 캘리브레이션 테스트는 **저장소의 실제 파일을 읽되 쓰지 않음.** 쓰기가 필요한
+것은 임시 폴더에 사본을 만들어 씀.
 
 일부만 실행:
 
@@ -113,6 +119,51 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestCollect` | 7 | 캐시 갱신, 무응답 보고, 깨진 프레임 |
 | `TestRefreshStates` | 4 | `PASSIVE` 전송, 게인 0, 큐 비우기 |
 | `TestFault` | 5 | 비트 해석, 무응답과 정상의 구분 |
+
+### `test_commissioning.py` — 33개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestSetControlMode` | 3 | `set_control_mode` |
+| `TestSetZero` | 6 | 메모 필수, 토크 켜진 상태 거부 |
+| `TestSetCanId` | 6 | 범위·중복·동일 id 거부 |
+| `TestSetProtocol` | 4 | 전원 재투입 경고 |
+| `TestNudge` | 10 | 시작 복귀, 토크 정리, 진폭 상한 |
+| `TestScan` | 4 | 응답자 수집 |
+
+### `test_config.py` — 45개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestRealFile` | 8 | 실제 `config/robot.yaml` |
+| `TestUnknownKeys` | 5 | 오타 거부 |
+| `TestStructure` | 8 | 필수 항목 누락 |
+| `TestValues` | 6 | 한계 순서·개수, 0 이하 값 |
+| `TestIdCollision` | 4 | 채널 안·채널 넘어 |
+| `TestDefaults` | 6 | 빠진 절이 기본값을 쓰는지 |
+| `TestSchema` | 8 | frozen, 조회 도우미 |
+
+### `test_calibration.py` — 35개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestRealFiles` | 6 | 실제 두 파일, `robot.yaml` 과 대조 |
+| `TestLoadRejects` | 11 | 형식 번호, 한계·게인 키 잔존, `sign=0` |
+| `TestSave` | 7 | 왕복, 크래시 후 원본 생존 |
+| `TestAttach` | 6 | 모터 id 재키잉, 관절 이름 불일치 |
+| `TestUnmeasured` | 5 | 메모 기준 판정 |
+
+### `test_commission_cli.py` — 30개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestScan` | 4 | 무응답 표시, 원인 후보 |
+| `TestState` | 3 | raw/cal 병기 |
+| `TestFault` | 3 | 비트 이름, 무응답과 정상의 구분 |
+| `TestNudge` | 5 | 왕복, 안 움직임 경고, 진폭 상한 |
+| `TestDangerous` | 6 | `--yes` 요구, 승인 전 무전송 |
+| `TestZero` | 4 | 메모 저장, 토크 차단 순서 |
+| `TestTargeting` | 5 | `--limb` 요구, 설정 오류가 버스보다 먼저 |
 
 ---
 
@@ -320,6 +371,47 @@ assert raw.sent[0].data[6] == T.F_CMD_FAULT_QUERY
 
 `F_CMD` 가 `0xFF` 면 **클리어**임. 조회하려다 지우면 원인을 잃음.
 
+### `test_nothing_is_sent_without_yes` — 승인이 버스보다 먼저
+
+```python
+with pytest.raises(SystemExit):
+    run("--limb", "right_leg", "zero", "knee", "--note", "편 상태")
+assert FakeBus.instances == []
+```
+
+되돌리기 어려운 조작은 **모터에 아무것도 보내지 않은 상태에서** 멈춰야 함.
+설정 오류도 마찬가지임 — 오타가 있는 설정으로 부르면 채널을 열지 않음.
+
+### `test_disables_torque_first` — 영점 잡기 순서
+
+```python
+stop = next(i for i, m in enumerate(sent) if m.data[7] == T.CMD_STOP)
+zero = next(i for i, m in enumerate(sent) if m.data[7] == T.CMD_SET_ZERO)
+assert stop < zero
+```
+
+영점을 잡으면 좌표계가 통째로 옮겨가는데 직전 목표각은 **옛 좌표계 값**임. 그대로
+유지되면 그 차이만큼 관절이 튐.
+
+### `test_original_survives_a_crash` — 실측값 보호
+
+`os.replace` 를 실패시켜 원본이 남는지 확인함. 실측값을 잃으면 다시 재는 수밖에
+없는데, 그건 로봇을 분해해야 하는 작업일 수 있음. 임시 파일도 남지 않음.
+
+### `test_missing_joint_is_an_error` — 관절 이름 불일치
+
+관절 하나가 조용히 항등변환으로 도는 것이 가장 나쁨. `sign` 이 반대인 관절이
+그렇게 되면 목표에서 **멀어지는 방향**으로 토크가 걸림.
+
+### `test_limb_typo` — 설정 오타
+
+```
+ConfigError: limbs.right_leg: 모르는 키 ['contorl_hz']
+```
+
+YAML 은 모르는 키를 조용히 넘김. 고쳤는데 아무것도 안 바뀌고, 증상이 "느리다" 로
+나타나므로 원인을 설정에서 찾을 이유가 없어 오래 걸림.
+
 ### `test_all_keys_always_present`
 
 카운터가 0이어도 모든 키를 출력하는지. 필드가 나타났다 사라지면 PlotJuggler
@@ -331,11 +423,10 @@ assert raw.sent[0].data[6] == T.F_CMD_FAULT_QUERY
 
 | 대상 | 사유 |
 |---|---|
-| `robstride/commissioning.py` | 아직 작성 전 (4단계) |
-| `config/`, `calibration/` | 아직 작성 전 (5단계) |
 | `kinematics/`, `robots/` | 아직 작성 전 (6단계) |
 | `telemetry/` | 아직 작성 전 (7단계) |
-| `control/`, `scripts/` | 아직 작성 전 (8~9단계) |
+| `control/` | 아직 작성 전 (8단계) |
+| `scripts/bringup.py` | 아직 작성 전 (9단계) |
 
 작성 순서는 [docs/build_from_scratch.md](../docs/build_from_scratch.md) 참조.
 각 단계마다 해당 계층의 테스트를 여기에 추가함.
