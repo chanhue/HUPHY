@@ -7,6 +7,16 @@
 `codec/mit.py` 가 라디안 변환을 혼자 떠안는 것과 같은 방식임.
 
 
+## 채널은 이 코드 밖에서 올라옴
+
+socketcan 채널은 커널이 관리함. 속도를 포함한 설정이 채널을 올릴 때 정해지고,
+이 코드는 이미 올라와 있는 채널에 붙기만 함.
+
+    sudo ip link set can0 up type can bitrate 1000000
+
+채널이 없거나 내려가 있으면 `connect()` 가 실패함.
+
+
 ## 전송과 수거를 나눔
 
 한 번에 묶어 두면 버스가 둘일 때 두 다리의 명령 시각이 벌어짐 (이슈 #10).
@@ -34,7 +44,7 @@
 지금은 제어 루프 한 곳에서만 부름. 송신에만 락을 걸어 프레임이 섞이지 않게 함.
 
 **수신 전용 스레드를 두면 이 가정이 깨짐.** 그때 락 구성을 다시 봐야 함 —
-slcan(시리얼)은 송수신이 같은 포트를 쓰므로 하나의 락으로 묶어야 함.
+수신 스레드가 락을 쥔 채 `recv` 에서 블로킹하면 송신이 그만큼 밀림.
 """
 
 from __future__ import annotations
@@ -47,8 +57,8 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BITRATE = 1_000_000
-"""RobStride 기본값. 버스에 물린 모든 노드가 같아야 함."""
+DEFAULT_INTERFACE = "socketcan"
+"""라즈베리파이 + 리눅스 커널 CAN. 다른 값은 테스트용 `virtual` 정도임."""
 
 DEFAULT_POLL_S = 0.0002
 """recv 한 번의 대기 시간. 짧게 여러 번 도는 쪽이 한 번 길게 기다리는 것보다 나음."""
@@ -107,17 +117,6 @@ class CanCounters:
         }
 
 
-def _guess_interface(channel: str) -> str:
-    """채널 이름으로 드라이버를 추측함.
-
-        /dev/tty.usbmodem...  ->  slcan     시리얼 어댑터 (macOS 개발용)
-        can0, can1            ->  socketcan 리눅스 커널 (로봇 본체)
-
-    맞히지 못하면 설정에서 명시하면 됨.
-    """
-    return "slcan" if channel.startswith("/dev/") else "socketcan"
-
-
 class CanBus:
     """CAN 채널 하나. 다리 하나가 버스 하나를 씀.
 
@@ -129,12 +128,10 @@ class CanBus:
         self,
         channel: str,
         *,
-        interface: Optional[str] = None,
-        bitrate: int = DEFAULT_BITRATE,
+        interface: str = DEFAULT_INTERFACE,
     ) -> None:
         self.channel = channel
-        self.interface = interface or _guess_interface(channel)
-        self.bitrate = int(bitrate)
+        self.interface = interface
 
         self._bus = None
         self._tx_lock = threading.Lock()
@@ -142,7 +139,7 @@ class CanBus:
 
     def __repr__(self) -> str:
         state = "연결됨" if self.is_connected else "끊김"
-        return f"CanBus({self.channel!r}, {self.interface}, {self.bitrate}bps, {state})"
+        return f"CanBus({self.channel!r}, {self.interface}, {state})"
 
     # ---- 수명 -------------------------------------------------------------
     @property
@@ -150,10 +147,15 @@ class CanBus:
         return self._bus is not None
 
     def connect(self) -> None:
-        """채널을 엶. `python-can` 은 여기서 처음 import됨.
+        """이미 올라와 있는 채널에 붙음.
 
-        모듈 최상단에서 import하면 이 파일을 import하는 것만으로 `python-can` 이
-        필요해짐. 순수 계산 계층의 테스트까지 같이 막힘.
+        속도는 커널이 관리함:
+
+            sudo ip link set can0 up type can bitrate 1000000
+
+        `python-can` 은 여기서 처음 import됨. 모듈 최상단에서 하면 이 파일을
+        import하는 것만으로 `python-can` 이 필요해지고, 순수 계산 계층의 테스트까지
+        같이 막힘.
         """
         if self.is_connected:
             return
@@ -168,7 +170,7 @@ class CanBus:
 
         try:
             self._bus = can.interface.Bus(
-                channel=self.channel, interface=self.interface, bitrate=self.bitrate
+                channel=self.channel, interface=self.interface
             )
         except Exception as e:
             raise ConnectionError(

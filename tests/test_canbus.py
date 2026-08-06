@@ -19,7 +19,6 @@ from huphy.motors.canbus import (
     CanBus,
     CanCounters,
     CanFrame,
-    _guess_interface,
     drain_all,
 )
 
@@ -108,21 +107,16 @@ class TestCanFrame:
 
 
 # ===========================================================================
-# 인터페이스 추측
+# 인터페이스
 # ===========================================================================
-class TestGuessInterface:
-    def test_device_path_is_serial(self):
-        """macOS 개발 환경. 시리얼 CAN 어댑터를 씀."""
-        assert _guess_interface("/dev/tty.usbmodem14201") == "slcan"
-
-    def test_can_name_is_socketcan(self):
-        """로봇 본체. 리눅스 커널 드라이버임."""
-        assert _guess_interface("can0") == "socketcan"
-        assert _guess_interface("can1") == "socketcan"
+class TestInterface:
+    def test_defaults_to_socketcan(self, fake_can):
+        """라즈베리파이 + 리눅스 커널 CAN. 이 프로젝트의 유일한 실사용 경로임."""
+        assert CanBus("can0").interface == "socketcan"
 
     def test_explicit_wins(self, fake_can):
-        b = CanBus("can0", interface="virtual")
-        assert b.interface == "virtual"
+        """테스트에서 virtual 을 끼울 때 씀."""
+        assert CanBus("can0", interface="virtual").interface == "virtual"
 
 
 # ===========================================================================
@@ -132,12 +126,14 @@ class TestLifecycle:
     def test_not_connected_initially(self, fake_can):
         assert CanBus("can1").is_connected is False
 
-    def test_connect_passes_settings(self, bus):
-        """RobStride 기본 비트레이트는 1 Mbps 임. 버스의 모든 노드가 같아야 함."""
+    def test_connect_passes_channel_and_interface(self, bus):
+        """채널과 인터페이스만 넘김. 속도는 커널이 관리함.
+
+            sudo ip link set can0 up type can bitrate 1000000
+        """
         assert FakeCanBus.instances[-1].kwargs == {
             "channel": "can1",
             "interface": "socketcan",
-            "bitrate": 1_000_000,
         }
 
     def test_connect_twice_is_noop(self, bus):
