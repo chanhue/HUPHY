@@ -140,6 +140,10 @@ can/tx_errors  0.0                    <- 배선이 아니라 모터가 무시하
 
 없었으면 `-1` 임.
 
+---
+
+## 이름 규약
+
 `/` 로 나눔. PlotJuggler 가 트리로 묶어 보여줌 — 모터가 20개를 넘어가면 평평한
 목록에서는 찾을 수 없음.
 
@@ -157,17 +161,15 @@ can/tx_errors  0.0                    <- 배선이 아니라 모터가 무시하
 
 ---
 
-## 팔다리마다 패킷 하나
-
-**다리 하나가 필드 46개에 약 1.3 KB 임.**
-
-둘을 한 패킷에 합치면 이더넷 MTU(1500)를 넘어 조각남. **조각 하나만 잃어도 패킷
-전체가 버려져** 손실률이 확 올라감.
+## 팔다리마다 따로 둠
 
 ```python
-Telemetry(left_leg,  host=...)    # 패킷 하나
-Telemetry(right_leg, host=...)    # 패킷 하나
+Telemetry(left_leg,  host=...)    # 빠른 패킷 + 진단 패킷
+Telemetry(right_leg, host=...)    # 빠른 패킷 + 진단 패킷
 ```
+
+**합쳐 보내지 않음.** 다리 하나의 빠른 패킷이 이미 850 B 라, 둘을 합치면 MTU 를
+넘어 조각남. 조각 하나만 잃어도 패킷 전체가 버려져 손실률이 확 올라감.
 
 PlotJuggler 는 여러 출처를 같은 타임라인에 올림. 팔·상체까지 붙으면 이 구성이
 그대로 늘어남.
@@ -264,8 +266,11 @@ tm = telemetry.Telemetry.from_config(leg, robot_config.telemetry)
 with tm:
     while running:
         leg.send_action(action)
-        tm.record(loop_dt_ms=dt * 1000, missing=len(missing))
+        tm.record(loop_dt_ms=dt * 1000)
 ```
+
+무응답 모터 수는 인자로 넘기지 않음 — `Leg` 가 누가 답했는지 알고 있어 스냅샷이
+직접 읽어 감.
 
 설정에서 둘 다 꺼 두면 아무것도 하지 않음 — **호출부가 분기하지 않아도 되게 함.**
 
@@ -276,6 +281,8 @@ telemetry:
   csv_path: null        # 비우면 파일 안 만듦
   csv_flush_every: 50
 ```
+
+진단 패킷 주기(`diag_every`)는 설정 파일에 없음. 기본 10주기임.
 
 ---
 
