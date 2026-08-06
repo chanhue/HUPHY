@@ -5,19 +5,32 @@ UDP 와 CSV 가 둘 다 여기서 나온 사전을 소비함. 두 군데에서 �
 없어짐.
 
 
+## 두 갈래로 나눔
+
+    빠른 것   매 주기      pos tgt err vel tau
+    진단      N주기마다    temp age ack miss, 카운터, 마지막 사건 이후 경과
+
+**나누는 이유는 패킷 크기임.** 다리 하나가 필드 66개면 약 1.8 KB 로 이더넷
+MTU(1500)를 넘어 조각남. 조각 하나만 잃어도 패킷 전체가 버려짐.
+
+나누는 것이 자연스럽기도 함 — `temp` 는 초 단위로 변하고 카운터는 사건이 있을 때만
+변함. 100Hz 로 보낼 이유가 없음.
+
+**CSV 는 나누지 않음.** 크기 제약이 없고, 한 줄에 다 있어야 나중에 대조하기 쉬움.
+
+
 ## 숫자만 담음
 
-PlotJuggler 는 숫자만 그림. 불리언은 `0`/`1` 정수로, 문자열은 정수 코드로 바꿔
-보냄. 원문 문자열이 필요하면 CSV 쪽에 따로 남길 것.
+PlotJuggler 는 숫자만 그림. 불리언은 `0`/`1` 로, "없음" 은 `-1` 로 보냄 — 무한대는
+JSON 으로 못 보내고 CSV 에서도 읽기 어려움.
 
 
 ## 이름 규약
 
-    t                          시작부터 흐른 초
-    right_leg/knee/pos         실측 위치 (cal 공간)
-    right_leg/knee/tgt         목표 위치
-    right_leg/knee/err         오차 = tgt - pos
-    right_leg/guard/clip_limit 누적 카운터
+    t                           시작부터 흐른 초
+    right_leg/knee/pos          실측 위치 (cal 공간)
+    right_leg/knee/ack          직전 주기에 응답했나
+    right_leg/guard/clip_limit  누적 카운터
 
 `/` 로 나눔. PlotJuggler 가 트리로 묶어 보여줌 — 모터가 20개를 넘어가면 평평한
 목록에서는 찾을 수 없음.
@@ -36,66 +49,95 @@ PlotJuggler 레이아웃도 미리 만들어 둘 수 있음.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Tuple
 
-MOTOR_FIELDS = ("pos", "tgt", "err", "vel", "tau", "temp")
-"""모터마다 나가는 값.
+FAST_MOTOR_FIELDS = ("pos", "tgt", "err", "vel", "tau")
+"""매 주기 나가는 값. 게인 튜닝에서 보는 것들임.
 
     pos    실측 위치 (cal 공간)
     tgt    목표 위치. 실제로 나간 것이지 명령한 것이 아님
-    err    tgt - pos. 게인 튜닝에서 제일 먼저 보는 값
+    err    tgt - pos. 제일 먼저 보는 값
     vel    실측 속도
     tau    실측 토크
-    temp   권선 온도
 """
+
+DIAG_MOTOR_FIELDS = ("temp", "age", "ack", "miss")
+"""느리게 변하거나 사건이 있을 때만 변하는 값.
+
+    temp   권선 온도. 초 단위로 변함
+    age    마지막 응답 이후 경과 (ms). 한 번도 없었으면 -1
+    ack    1 응답함 / 0 씹힘 / -1 명령하지 않음
+    miss   연속 무응답 주기 수
+
+`age` 가 가장 믿을 만함. 응답이 한 번도 없던 모터는 현재 위치를 몰라 가드가 명령을
+거부하므로, 명령도 안 나가고 응답 대상에서도 빠져 `ack` 가 -1 로 가려짐. `age` 는
+명령 여부와 무관하게 참임.
+"""
+
+FAST_GLOBAL = ("t", "loop_dt")
+DIAG_GLOBAL = ("t", "missing", "since_clip", "since_reject")
 
 GUARD_FIELDS = ("clip_limit", "clip_jump", "reject_nan", "reject_nostate")
 CAN_FIELDS = ("tx_errors", "rx_errors", "drain_timeouts")
-LOOP_FIELDS = ("t", "loop_dt", "missing")
 
 
-def _motor_key(limb: str, motor: str, field: str) -> str:
-    return f"{limb}/{motor}/{field}"
+def _key(limb: str, group: str, field: str) -> str:
+    return f"{limb}/{group}/{field}"
 
 
-def field_names(robot: Any) -> Tuple[str, ...]:
-    """이 로봇이 내보낼 필드 이름들. **실행 전에 알 수 있음.**
+def _limb_of(robot: Any) -> str:
+    return robot.id or robot.name
 
-    CSV 헤더와 PlotJuggler 레이아웃이 이 목록을 씀. 순서가 CSV 열 순서임.
-    """
-    names = ["t", "loop_dt", "missing"]
-    limb = robot.id or robot.name
+
+# ===========================================================================
+# 필드 목록
+# ===========================================================================
+def fast_field_names(robot: Any) -> Tuple[str, ...]:
+    """매 주기 나가는 필드."""
+    limb = _limb_of(robot)
+    names = list(FAST_GLOBAL)
     for motor in robot.motor_names:
-        names.extend(_motor_key(limb, motor, f) for f in MOTOR_FIELDS)
+        names.extend(_key(limb, motor, f) for f in FAST_MOTOR_FIELDS)
+    return tuple(names)
+
+
+def diag_field_names(robot: Any) -> Tuple[str, ...]:
+    """진단 필드. 느린 주기로 나감."""
+    limb = _limb_of(robot)
+    names = list(DIAG_GLOBAL)
+    for motor in robot.motor_names:
+        names.extend(_key(limb, motor, f) for f in DIAG_MOTOR_FIELDS)
     names.extend(f"{limb}/guard/{f}" for f in GUARD_FIELDS)
     names.extend(f"{limb}/can/{f}" for f in CAN_FIELDS)
     return tuple(names)
 
 
-def build(
-    robot: Any,
-    *,
-    t: float,
-    loop_dt_ms: float = 0.0,
-    missing: int = 0,
-) -> Dict[str, float]:
-    """지금 상태를 한 사전으로 만듦.
+def field_names(robot: Any) -> Tuple[str, ...]:
+    """CSV 열. 빠른 것과 진단을 합친 것임. 순서가 열 순서임.
+
+    `t` 는 양쪽에 다 있으므로 한 번만 넣음.
+    """
+    fast = fast_field_names(robot)
+    return fast + tuple(n for n in diag_field_names(robot) if n not in fast)
+
+
+# ===========================================================================
+# 스냅샷
+# ===========================================================================
+def build_fast(robot: Any, *, t: float, loop_dt_ms: float = 0.0) -> Dict[str, float]:
+    """매 주기 나갈 값.
 
     `robot` 에서 읽기만 함 — 새로 통신하지 않음. 제어 루프가 이미 수거해 둔 값을
     씀. 여기서 CAN 을 건드리면 기록이 주기를 흔들게 됨.
 
-    `tgt` 는 **실제로 나간 명령**임 (`robot.last_sent`). 명령한 값이 아니라 잘리고
-    남은 값이라, 오차를 보면 모터가 왜 그렇게 움직였는지가 설명됨.
+    `tgt` 는 **실제로 나간 명령**임 (`robot.last_sent`). 명령한 값을 기록하면
+    한계에 걸린 것과 게인이 낮은 것이 그래프에서 구분되지 않음.
     """
-    limb = robot.id or robot.name
+    limb = _limb_of(robot)
     observation = robot.get_observation()
     sent = robot.last_sent
 
-    out: Dict[str, float] = {
-        "t": float(t),
-        "loop_dt": float(loop_dt_ms),
-        "missing": int(missing),
-    }
+    out: Dict[str, float] = {"t": float(t), "loop_dt": float(loop_dt_ms)}
 
     for motor in robot.motor_names:
         pos = float(observation.get(f"{motor}.pos", 0.0))
@@ -103,12 +145,46 @@ def build(
         # 그때는 실측을 목표로 둬서 오차가 0이 되게 함 -- 0이 아닌 가짜 오차가
         # 그래프에 남는 것보다 나음.
         tgt = float(sent.get(motor, pos))
-        out[_motor_key(limb, motor, "pos")] = pos
-        out[_motor_key(limb, motor, "tgt")] = tgt
-        out[_motor_key(limb, motor, "err")] = tgt - pos
-        out[_motor_key(limb, motor, "vel")] = float(observation.get(f"{motor}.vel", 0.0))
-        out[_motor_key(limb, motor, "tau")] = float(observation.get(f"{motor}.torque", 0.0))
-        out[_motor_key(limb, motor, "temp")] = float(observation.get(f"{motor}.temp", 0.0))
+        out[_key(limb, motor, "pos")] = pos
+        out[_key(limb, motor, "tgt")] = tgt
+        out[_key(limb, motor, "err")] = tgt - pos
+        out[_key(limb, motor, "vel")] = float(observation.get(f"{motor}.vel", 0.0))
+        out[_key(limb, motor, "tau")] = float(observation.get(f"{motor}.torque", 0.0))
+    return out
+
+
+def build_diag(robot: Any, *, t: float) -> Dict[str, float]:
+    """진단 값.
+
+    `ack` 가 핵심임 — MIT 모드는 명령을 받으면 반드시 상태 프레임으로 답하므로,
+    **안 오면 그 모터가 명령을 처리하지 않은 것임.**
+
+    `can/tx_errors` 와 같이 봐야 원인이 좁혀짐.
+
+        tx_errors = 0 인데 ack = 0   ->  모터가 명령을 무시함 (프로토콜·모드 불일치)
+        tx_errors > 0                ->  버스에 아무도 없음 (배선·전원)
+
+    CAN 하드웨어 ACK 는 버스에 붙은 아무 노드나 찍어주므로 "누군가 들었다" 일 뿐임.
+    모터별로 처리됐는지는 응답 프레임으로만 알 수 있음 (이슈 #11).
+    """
+    limb = _limb_of(robot)
+    observation = robot.get_observation()
+    link = _link_status(robot)
+
+    out: Dict[str, float] = {
+        "t": float(t),
+        # 명령했는데 응답이 없는 모터 수. 명령하지 않은 것(-1)은 세지 않음.
+        "missing": float(sum(1 for s in link.values() if s.get("ack", -1.0) == 0.0)),
+        "since_clip": _call(robot, "since_clip"),
+        "since_reject": _call(robot, "since_reject"),
+    }
+
+    for motor in robot.motor_names:
+        status = link.get(motor, {})
+        out[_key(limb, motor, "temp")] = float(observation.get(f"{motor}.temp", 0.0))
+        out[_key(limb, motor, "age")] = float(status.get("age", -1.0))
+        out[_key(limb, motor, "ack")] = float(status.get("ack", -1.0))
+        out[_key(limb, motor, "miss")] = float(status.get("miss", 0.0))
 
     guard = getattr(robot, "counters", None)
     out[f"{limb}/guard/clip_limit"] = _counter(guard, "clips", "limit")
@@ -116,12 +192,36 @@ def build(
     out[f"{limb}/guard/reject_nan"] = _counter(guard, "rejects", "nan")
     out[f"{limb}/guard/reject_nostate"] = _counter(guard, "rejects", "nostate")
 
-    can = getattr(getattr(robot, "bus", None), "bus", None)
-    can_counters = getattr(can, "counters", None)
+    can_counters = getattr(getattr(getattr(robot, "bus", None), "bus", None), "counters", None)
     for field in CAN_FIELDS:
         out[f"{limb}/can/{field}"] = float(getattr(can_counters, field, 0))
 
     return out
+
+
+def build(robot: Any, *, t: float, loop_dt_ms: float = 0.0) -> Dict[str, float]:
+    """CSV 한 줄. 빠른 것과 진단을 합친 것임."""
+    out = build_fast(robot, t=t, loop_dt_ms=loop_dt_ms)
+    out.update(build_diag(robot, t=t))
+    return out
+
+
+# ===========================================================================
+# 없어도 0을 냄
+# ===========================================================================
+def _link_status(robot: Any) -> Dict[str, Dict[str, float]]:
+    """링크 상태를 물어봄. 없으면 빈 사전.
+
+    `Robot` 계약에 없는 선택 기능임 — 로봇마다 통신 방식이 달라 응답 개념이 없을
+    수도 있음. 없으면 `ack=0`, `age=-1` 로 나감.
+    """
+    getter = getattr(robot, "link_status", None)
+    return getter() if callable(getter) else {}
+
+
+def _call(robot: Any, name: str) -> float:
+    getter = getattr(robot, name, None)
+    return float(getter()) if callable(getter) else -1.0
 
 
 def _counter(counters: Any, group: str, key: str) -> float:
@@ -137,11 +237,12 @@ def merge(*snapshots: Mapping[str, float]) -> Dict[str, float]:
     팔다리 이름이 앞에 붙어 있어 키가 겹치지 않음. `t` 와 `loop_dt` 는 같은 주기의
     값이라 뒤엣것이 앞엣것을 덮어써도 같음.
 
-    **UDP 로는 합쳐 보내지 말 것.** 다리 하나가 이미 1.3 KB 가까이 되어, 둘을 합치면
-    이더넷 MTU(1500)를 넘어 조각남. 조각 하나만 잃어도 패킷 전체가 버려짐.
+    **UDP 로는 합쳐 보내지 말 것.** 다리 하나의 빠른 패킷이 이미 1 KB 가까이 되어,
+    둘을 합치면 이더넷 MTU(1500)를 넘어 조각남. 조각 하나만 잃어도 패킷 전체가
+    버려짐.
 
     UDP 는 팔다리마다 한 패킷씩 보냄 — PlotJuggler 는 여러 출처를 같은 타임라인에
-    올림. CSV 는 크기 제약이 없으므로 한 파일에 모든 열을 두는 편이 다시 볼 때 편함.
+    올림.
     """
     out: Dict[str, float] = {}
     for snapshot in snapshots:

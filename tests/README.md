@@ -13,7 +13,7 @@ tests/
 ├── test_commission_cli.py  scripts/commission.py       30개
 ├── test_ankle.py           kinematics/ankle.py        149개
 ├── test_leg.py             robots/leg.py               42개
-└── test_telemetry.py       telemetry/                  36개
+└── test_telemetry.py       telemetry/                  43개
 ```
 
 ## 실행
@@ -23,9 +23,9 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-........................................................................ [ 90%]
-......................................................                   [100%]
-558 passed in 3.30s
+........................................................................ [ 87%]
+.....................................................................    [100%]
+573 passed in 3.41s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -194,16 +194,17 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestCalibration` | 5 | 미실측 거부 |
 | `TestLifecycle` | 2 | 예외 중 토크 차단 |
 | `TestMirroredLeg` | 1 | 좌우 대칭 |
+| `TestLinkStatus` | 7 | ack, age, miss, since_* |
 
 ### `test_telemetry.py` — 36개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
-| `TestFieldNames` | 5 | 실행 전 목록, `build` 와 일치 |
+| `TestFieldNames` | 8 | 실행 전 목록, 빠른 것/진단 분리 |
 | `TestBuild` | 8 | 오차, 실제로 나간 목표, 없는 카운터 |
-| `TestUdp` | 8 | 진짜 소켓 왕복, 반올림, MTU, 실패 |
+| `TestUdp` | 10 | 진짜 소켓 왕복, 반올림, MTU, 실패 |
 | `TestCsv` | 8 | 헤더, 열 순서, flush, 실패 |
-| `TestTelemetry` | 6 | 둘이 같은 스냅샷을 소비 |
+| `TestTelemetry` | 8 | 둘이 같은 스냅샷, 진단 감축 |
 
 UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬화와 반올림이 실제로
 왕복하는지 확인함.
@@ -512,10 +513,22 @@ assert set(snapshot.build(robot, t=0.0)) == set(snapshot.field_names(robot))
 두 군데에서 필드를 만들면 반드시 어긋남 — CSV 헤더에는 있는데 UDP 에는 없는 값이
 생기고, 어느 쪽이 맞는지 알 수 없어짐.
 
-### `test_one_leg_fits_in_a_packet` — MTU
+### `test_each_packet_fits` / `test_merged_would_not_fit` — MTU
 
-다리 하나가 약 1.3 KB 임. 둘을 합치면 넘쳐서 조각나고, **조각 하나만 잃어도 패킷
-전체가 버려짐.** 팔다리마다 한 패킷씩 보내는 근거임.
+빠른 패킷 약 850 B, 진단 약 950 B 로 각각은 들어감. **합치면 넘쳐서 조각나고,
+조각 하나만 잃어도 패킷 전체가 버려짐.** 나눈 근거를 양쪽으로 고정함.
+
+### `test_silent_motor_is_counted` — 명령이 씹혔는지
+
+MIT 모드는 명령을 받으면 반드시 답함. 안 오면 그 모터가 처리하지 않은 것임.
+
+`tx_errors` 가 0인데 `ack` 가 0이면 **모터가 명령을 무시하는 것** — 배선이 아니라
+프로토콜이나 제어 모드가 어긋난 것임 (이슈 #11).
+
+### `test_collect_waits_only_for_commanded_motors`
+
+응답은 명령을 받은 모터만 보냄. 전체를 기다리면 명령하지 않은 모터가 무응답으로
+잡혀 **가짜 고장**이 보임.
 
 ### `test_send_failure_does_not_raise` — 관측이 제어를 멈추면 안 됨
 

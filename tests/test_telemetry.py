@@ -99,12 +99,28 @@ class TestFieldNames:
     def test_every_motor_gets_every_field(self, robot):
         names = snapshot.field_names(robot)
         for motor in robot.motor_names:
-            for field in snapshot.MOTOR_FIELDS:
+            for field in snapshot.FAST_MOTOR_FIELDS + snapshot.DIAG_MOTOR_FIELDS:
                 assert f"right_leg/{motor}/{field}" in names
 
     def test_order_is_stable(self, robot):
         """CSV 열 순서가 이 순서임. 바뀌면 기록을 이어 볼 수 없음."""
-        assert snapshot.field_names(robot)[:3] == ("t", "loop_dt", "missing")
+        assert snapshot.field_names(robot)[:2] == ("t", "loop_dt")
+
+    def test_csv_is_fast_plus_diag(self, robot):
+        """CSV 는 나누지 않음. 한 줄에 다 있어야 나중에 대조하기 쉬움."""
+        fast = set(snapshot.fast_field_names(robot))
+        diag = set(snapshot.diag_field_names(robot))
+        assert set(snapshot.field_names(robot)) == fast | diag
+
+    def test_t_appears_once_in_csv(self, robot):
+        """양쪽 패킷에 다 있지만 열은 하나여야 함."""
+        assert list(snapshot.field_names(robot)).count("t") == 1
+
+    def test_fast_and_diag_are_disjoint_apart_from_t(self, robot):
+        """같은 값이 두 패킷에 실리면 대역만 낭비함."""
+        fast = set(snapshot.fast_field_names(robot))
+        diag = set(snapshot.diag_field_names(robot))
+        assert fast & diag == {"t"}
 
 
 # ===========================================================================
@@ -157,7 +173,7 @@ class TestBuild:
         """새로 통신하지 않음. 기록이 주기를 흔들면 안 됨."""
         calls = []
         robot.get_observation = lambda: (calls.append(1), dict(robot._obs))[1]
-        snapshot.build(robot, t=0.0)
+        snapshot.build_fast(robot, t=0.0)
         assert len(calls) == 1
 
     def test_merge_keeps_both_limbs(self):
@@ -194,14 +210,28 @@ class TestUdp:
             sink.send({"x": 1.23456789})
         assert json.loads(receiver.recv(4096))["x"] == 1.23
 
-    def test_one_leg_fits_in_a_packet(self, receiver, robot):
-        """다리 하나는 들어감. 둘을 합치면 넘침 — 팔다리마다 한 패킷씩 보냄."""
+    @pytest.mark.parametrize("builder", [snapshot.build_fast, snapshot.build_diag])
+    def test_each_packet_fits(self, receiver, builder):
+        """다리 하나의 한 패킷은 들어감. 둘을 합치면 넘침 — 그래서 나눠 보냄."""
         full = FakeRobot(motors=("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"))
         port = receiver.getsockname()[1]
         with UdpSink("127.0.0.1", port) as sink:
-            sink.send(snapshot.build(full, t=0.0))
+            sink.send(builder(full, t=0.0))
         assert len(receiver.recv(4096)) < MTU_LIMIT
         assert sink.counters.oversize == 0
+
+    def test_merged_would_not_fit(self, receiver):
+        """나눈 이유를 고정함. 합치면 MTU 를 넘어 조각나고, 조각 하나만 잃어도
+        패킷 전체가 버려짐.
+        """
+        full = FakeRobot(motors=("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"))
+        both = snapshot.build(full, t=0.0)
+        left = FakeRobot("left_leg", motors=("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"))
+        merged = snapshot.merge(both, snapshot.build(left, t=0.0))
+        port = receiver.getsockname()[1]
+        with UdpSink("127.0.0.1", port) as sink:
+            sink.send(merged)
+        assert sink.counters.oversize == 1
 
     def test_oversize_is_counted(self, receiver):
         """조각나면 조각 하나만 잃어도 패킷 전체가 버려짐. 조용히 두면 안 됨."""
@@ -308,12 +338,13 @@ class TestTelemetry:
         port = receiver.getsockname()[1]
         path = tmp_path / "log.csv"
         with telemetry.Telemetry(robot, host="127.0.0.1", port=port,
-                                 csv_path=str(path), flush_every=1) as tm:
+                                 csv_path=str(path), flush_every=1, diag_every=1) as tm:
             tm.record(loop_dt_ms=10.0)
 
-        packet = json.loads(receiver.recv(4096))
+        fast = json.loads(receiver.recv(4096))
+        diag = json.loads(receiver.recv(4096))
         header, row = path.read_text().splitlines()
-        assert set(packet) == set(header.split(","))
+        assert set(fast) | set(diag) == set(header.split(","))
         assert len(row.split(",")) == len(header.split(","))
 
     def test_time_starts_at_zero(self, tmp_path, robot):
@@ -341,6 +372,40 @@ class TestTelemetry:
         """CSV 헤더를 쓰고 나면 열이 고정됨. 중간에 바뀌면 기록이 밀림."""
         tm = telemetry.Telemetry(robot)
         assert tm.fields == snapshot.field_names(robot)
+
+    def test_diag_is_decimated(self, tmp_path, receiver, robot):
+        """temp 는 초 단위로 변하고 카운터는 사건이 있을 때만 변함.
+
+        매 주기 보낼 이유가 없고, 합치면 패킷이 MTU 를 넘음.
+        """
+        port = receiver.getsockname()[1]
+        with telemetry.Telemetry(robot, host="127.0.0.1", port=port, diag_every=3) as tm:
+            for _ in range(6):
+                tm.record()
+
+        packets = []
+        receiver.settimeout(0.2)
+        while True:
+            try:
+                packets.append(json.loads(receiver.recv(4096)))
+            except socket.timeout:
+                break
+        assert sum(1 for p in packets if "loop_dt" in p) == 6
+        assert sum(1 for p in packets if "missing" in p) == 2
+
+    def test_csv_gets_every_field_every_row(self, tmp_path, robot):
+        """진단 값도 매번 계산함. 나누는 것은 보내는 쪽뿐임 — CSV 는 매 줄에 다
+        있어야 나중에 대조하기 쉬움.
+        """
+        path = tmp_path / "log.csv"
+        with telemetry.Telemetry(robot, csv_path=str(path), flush_every=1,
+                                 diag_every=100) as tm:
+            for _ in range(3):
+                tm.record()
+        rows = path.read_text().splitlines()
+        assert len(rows) == 4
+        assert all(len(r.split(",")) == len(rows[0].split(",")) for r in rows)
+        assert all(cell != "" for cell in rows[-1].split(","))
 
     def test_self_counters_are_separate(self, tmp_path, robot):
         with telemetry.Telemetry(robot, csv_path=str(tmp_path / "log.csv")) as tm:

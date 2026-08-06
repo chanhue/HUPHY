@@ -31,7 +31,15 @@ from typing import Any, Dict, Mapping, Optional
 
 from . import csv_log, snapshot, udp
 from .csv_log import CsvSink
-from .snapshot import build, field_names, merge
+from .snapshot import (
+    build,
+    build_diag,
+    build_fast,
+    diag_field_names,
+    fast_field_names,
+    field_names,
+    merge,
+)
 from .udp import UdpSink
 
 __all__ = [
@@ -42,9 +50,20 @@ __all__ = [
     "CsvSink",
     "Telemetry",
     "build",
+    "build_fast",
+    "build_diag",
     "field_names",
+    "fast_field_names",
+    "diag_field_names",
     "merge",
 ]
+
+DEFAULT_DIAG_EVERY = 10
+"""진단 패킷을 N주기마다 보냄. 100Hz 에서 10Hz 임.
+
+`temp` 는 초 단위로 변하고 카운터는 사건이 있을 때만 변함. 매 주기 보낼 이유가
+없고, 합치면 패킷이 MTU 를 넘음.
+"""
 
 
 class Telemetry:
@@ -61,12 +80,15 @@ class Telemetry:
         port: int = 9870,
         csv_path: Optional[str] = None,
         flush_every: int = csv_log.DEFAULT_FLUSH_EVERY,
+        diag_every: int = DEFAULT_DIAG_EVERY,
     ) -> None:
         self.robot = robot
         self.fields = field_names(robot)
+        self.diag_every = max(1, int(diag_every))
         self.udp = UdpSink(host, port)
         self.csv = CsvSink(csv_path, self.fields, flush_every=flush_every)
         self._t0: Optional[float] = None
+        self._cycle = 0
 
     def __repr__(self) -> str:
         return f"Telemetry({self.udp}, {self.csv})"
@@ -105,24 +127,43 @@ class Telemetry:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    def record(self, *, loop_dt_ms: float = 0.0, missing: int = 0) -> Dict[str, float]:
-        """지금 상태를 찍어 내보냄. 만든 스냅샷을 돌려줌.
+    def record(self, *, loop_dt_ms: float = 0.0) -> Dict[str, float]:
+        """지금 상태를 찍어 내보냄. **CSV 한 줄에 해당하는 전체 사전**을 돌려줌.
 
         시각은 **첫 호출을 0으로** 하는 상대 시간임. 벽시계를 쓰면 그래프의 x 축이
         1.7e9 같은 값에서 시작해 읽을 수 없음.
+
+        UDP 는 두 패킷으로 나가고 주기가 다름.
+
+            빠른 것   매번
+            진단      `diag_every` 주기마다
+
+        진단 값은 **매번 계산함** — 사전 만드는 비용은 무시할 만하고, CSV 는 매 줄에
+        다 있어야 나중에 대조하기 쉬움. 나누는 것은 보내는 쪽뿐임.
         """
         now = time.monotonic()
         if self._t0 is None:
             self._t0 = now
+        t = now - self._t0
 
-        data = build(
-            self.robot, t=now - self._t0, loop_dt_ms=loop_dt_ms, missing=missing
-        )
-        self.emit(data)
-        return data
+        fast = build_fast(self.robot, t=t, loop_dt_ms=loop_dt_ms)
+        diag = build_diag(self.robot, t=t)
+
+        self.udp.send(fast)
+        if self._cycle % self.diag_every == 0:
+            self.udp.send(diag)
+        self._cycle += 1
+
+        row = dict(fast)
+        row.update(diag)
+        self.csv.write(row)
+        return row
 
     def emit(self, data: Mapping[str, float]) -> None:
-        """이미 만든 스냅샷을 내보냄. 여러 팔다리를 `merge` 로 합쳤을 때 씀."""
+        """이미 만든 사전을 그대로 내보냄. 여러 팔다리를 `merge` 로 합쳤을 때 씀.
+
+        **UDP 로는 합친 것을 보내지 말 것** — MTU 를 넘음. CSV 전용으로 쓸 것.
+        """
         self.udp.send(data)
         self.csv.write(data)
 

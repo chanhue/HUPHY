@@ -112,6 +112,18 @@ class Leg(Robot):
         self._ankle_guess: Tuple[float, float] = (0.0, 0.0)
         self.counters = guards.GuardCounters()
 
+        # 링크 상태. 명령이 씹혔는지 판단하는 근거임 -- MIT 모드는 명령을 받으면
+        # 반드시 상태 프레임으로 답하므로, 안 오면 그 모터가 처리하지 않은 것임.
+        self._missing: set = set(self.config.motor_ids)
+        self._miss_streak: Dict[int, int] = {i: 0 for i in self.config.motor_ids}
+        self._awaiting: Tuple[int, ...] = tuple(self.config.motor_ids)
+        """직전에 명령을 보낸 모터들. 응답을 기다리는 대상임."""
+
+        # 마지막 사건 시각. 누적 카운터만으로는 언제 일어났는지 그래프에서 계단을
+        # 찾아야 함. 이 값은 사건 직후 0으로 떨어져 눈에 바로 띔.
+        self._last_clip_t: Optional[float] = None
+        self._last_reject_t: Optional[float] = None
+
     # ---- 구성 -------------------------------------------------------------
     def _set_calibration(self, calibration: Mapping[str, MotorCalibration]) -> None:
         self.calibration = dict(calibration)
@@ -160,7 +172,8 @@ class Leg(Robot):
 
     def connect(self) -> None:
         self.bus.connect()
-        self.bus.refresh_states()
+        self._awaiting = tuple(self.config.motor_ids)
+        self._note_link(self.bus.refresh_states())
 
     def disconnect(self) -> None:
         self.bus.disconnect()
@@ -321,6 +334,10 @@ class Leg(Robot):
                 enforce_limits=self.safety.enforce_limits,
             )
             self.counters.record(result)
+            if result.clips:
+                self._last_clip_t = now
+            if result.reject is not None:
+                self._last_reject_t = now
             if not result.sendable:
                 continue
 
@@ -357,10 +374,92 @@ class Leg(Robot):
         return out
 
     def send(self, commands: Mapping[int, MitCommand]) -> int:
+        """계산된 명령을 보냄. **수거하지 않음.**
+
+        보낸 대상을 기억해 둠 — 응답은 **명령을 받은 모터만** 보내므로, 기다릴
+        개수가 명령한 개수임. 전체를 기다리면 명령하지 않은 모터가 무응답으로 잡힘.
+        """
+        self._awaiting = tuple(commands)
         return self.bus.send_mit(dict(commands))
 
     def collect(self) -> Tuple[int, ...]:
-        return tuple(self.bus.collect(expect=len(self.config.motors)))
+        """응답을 수거함. **직전에 명령한 모터만** 기다림."""
+        missing = self.bus.collect(expect=len(self._awaiting))
+        self._note_link(missing)
+        return tuple(m for m in missing if m in self._awaiting)
+
+    def _note_link(self, missing) -> None:
+        """이번 주기에 누가 답했는지 기록함.
+
+        MIT 모드는 명령을 받으면 반드시 상태 프레임으로 답함. **안 오면 그 모터가
+        명령을 처리하지 않은 것임** -- 이것이 애플리케이션 레벨 ack 임.
+
+        CAN 하드웨어 ACK 와 다름. 하드웨어 ACK 는 버스에 붙은 아무 노드나 찍어주므로
+        "누군가 들었다" 일 뿐이고, 그건 `can/tx_errors` 가 봄. 둘을 같이 보면
+        원인이 좁혀짐 -- tx_errors 가 0인데 응답이 없으면 모터가 명령을 무시한
+        것이고, 프로토콜이나 제어 모드가 어긋난 것임 (이슈 #11).
+        """
+        # 명령하지 않은 모터는 판정 대상이 아님. 직전 상태를 그대로 둠.
+        self._missing = {m for m in missing if m in self._awaiting}
+        for motor_id in self._awaiting:
+            if motor_id in self._missing:
+                self._miss_streak[motor_id] += 1
+            else:
+                self._miss_streak[motor_id] = 0
+
+    def link_status(self, now: Optional[float] = None) -> Dict[str, Dict[str, float]]:
+        """모터별 링크 상태. 관절 이름 -> `{age, ack, miss}`.
+
+            age    마지막 응답 이후 경과 (ms). 한 번도 못 받았으면 -1
+            ack     1  직전 주기에 명령하고 응답을 받음
+                    0  직전 주기에 명령했는데 응답이 없음  <- 씹힘
+                   -1  직전 주기에 명령하지 않음
+            miss   연속 무응답 주기 수
+
+        **`ack` 가 세 값인 이유**: 명령하지 않은 모터를 `1` 로 내면 거짓말이 되고
+        `0` 으로 내면 없는 고장이 보임.
+
+        이 구분이 실제로 필요함. 응답이 한 번도 없던 모터는 현재 위치를 모르므로
+        가드가 명령을 거부함(`reject_nostate`) — 그러면 명령이 안 나가고, 명령이
+        안 나갔으니 응답 대상에서도 빠짐. **그 모터가 진단에서 통째로 사라짐.**
+
+        그래서 진짜 신호는 `age` 임. `-1` 이면 한 번도 응답한 적이 없다는 뜻이고,
+        이 값은 명령 여부와 무관하게 참임.
+
+        `-1` 을 쓰는 이유: 무한대는 JSON 으로 못 보내고 CSV 에서도 읽기 어려움.
+        음수는 정상 범위에 없으므로 "없음" 을 뜻함.
+        """
+        stamp = time.monotonic() if now is None else now
+        out: Dict[str, Dict[str, float]] = {}
+        for motor_name, motor in self.config.motors.items():
+            state = self.bus.state(motor.id)
+            age = state.age(stamp)
+            if motor.id not in self._awaiting:
+                ack = -1.0
+            elif motor.id in self._missing:
+                ack = 0.0
+            else:
+                ack = 1.0
+            out[motor_name] = {
+                "age": -1.0 if age == float("inf") else age * 1000.0,
+                "ack": ack,
+                "miss": float(self._miss_streak[motor.id]),
+            }
+        return out
+
+    def since_clip(self, now: Optional[float] = None) -> float:
+        """마지막 클리핑 이후 경과 (초). 없었으면 -1."""
+        return self._since(self._last_clip_t, now)
+
+    def since_reject(self, now: Optional[float] = None) -> float:
+        """마지막 거부 이후 경과 (초). 없었으면 -1."""
+        return self._since(self._last_reject_t, now)
+
+    @staticmethod
+    def _since(stamp: Optional[float], now: Optional[float]) -> float:
+        if stamp is None:
+            return -1.0
+        return max(0.0, (time.monotonic() if now is None else now) - stamp)
 
     @property
     def last_sent(self) -> Dict[str, float]:

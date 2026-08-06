@@ -439,3 +439,76 @@ class TestMirroredLeg:
         l = left.build_commands({"ankle_pitch": 5.0, "ankle_roll": -2.0})
         assert l[11].position_deg == pytest.approx(-r[11].position_deg)
         assert l[12].position_deg == pytest.approx(-r[12].position_deg)
+
+
+# ===========================================================================
+# 링크 상태 — 명령이 씹혔는지
+# ===========================================================================
+class TestLinkStatus:
+    def test_ack_after_a_reply(self, leg):
+        leg.send_action({"knee": 10.0})
+        assert leg.link_status()["knee"]["ack"] == 1.0
+        assert leg.link_status()["knee"]["miss"] == 0.0
+
+    def test_ack_is_minus_one_when_not_commanded(self, leg):
+        """명령하지 않은 모터를 1로 내면 거짓말이 되고 0으로 내면 없는 고장이 보임."""
+        leg.send_action({"knee": 10.0})
+        assert leg.link_status()["hipz"]["ack"] == -1.0
+
+    def test_silent_motor_is_counted(self, fake_can):
+        """MIT 모드는 명령을 받으면 반드시 답함. 안 오면 처리하지 않은 것임."""
+        leg = build()
+        original = FakeBus.send
+
+        def deaf(self, msg):
+            if msg.arbitration_id == 10:
+                self.sent.append(msg)
+                return
+            original(self, msg)
+
+        FakeBus.send = deaf
+        try:
+            for _ in range(3):
+                leg.send_action({"knee": 10.0, "hipz": -50.0})
+        finally:
+            FakeBus.send = original
+
+        status = leg.link_status()
+        assert status["knee"]["ack"] == 0.0
+        assert status["knee"]["miss"] == 3
+        assert status["hipz"]["ack"] == 1.0
+
+    def test_age_is_the_reliable_signal(self, fake_can):
+        """응답이 한 번도 없던 모터는 위치를 몰라 가드가 명령을 거부함.
+
+        그러면 명령이 안 나가고 응답 대상에서도 빠져 ack 가 -1 로 가려짐.
+        age 는 명령 여부와 무관하게 참임.
+        """
+        leg = build()
+        assert leg.link_status()["knee"]["age"] >= 0.0     # connect 에서 받음
+
+    def test_never_answered_reports_minus_one(self, fake_can):
+        cfg = leg_config()
+        bus = RobStrideBus(CanBus(cfg.channel), cfg.motors_by_id())
+        leg = Leg(cfg, bus, calibration=identity(cfg.motors), allow_uncalibrated=True)
+        bus.connect()                       # refresh_states 를 안 부름
+        assert leg.link_status()["knee"]["age"] == -1.0
+
+    def test_collect_waits_only_for_commanded_motors(self, leg):
+        """응답은 명령을 받은 모터만 보냄.
+
+        전체를 기다리면 명령하지 않은 모터가 무응답으로 잡혀 가짜 고장이 보임.
+        """
+        leg.send(leg.build_commands({"knee": 10.0}))
+        assert leg.collect() == ()
+
+    def test_since_clip(self, leg):
+        assert leg.since_clip() == -1.0
+        leg.build_commands({"knee": 200.0})
+        assert 0.0 <= leg.since_clip() < 1.0
+
+    def test_since_reject(self, leg):
+        """누적 카운터만으로는 언제 일어났는지 계단을 찾아야 함."""
+        assert leg.since_reject() == -1.0
+        leg.build_commands({"knee": float("nan")})
+        assert 0.0 <= leg.since_reject() < 1.0
