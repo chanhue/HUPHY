@@ -11,7 +11,8 @@ tests/
 ├── test_config.py          config/                     45개
 ├── test_calibration.py     calibration/                35개
 ├── test_commission_cli.py  scripts/commission.py       30개
-└── test_ankle.py           kinematics/ankle.py        149개
+├── test_ankle.py           kinematics/ankle.py        149개
+└── test_leg.py             robots/leg.py               42개
 ```
 
 ## 실행
@@ -21,9 +22,9 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-........................................................................ [ 90%]
-................................................                         [100%]
-480 passed in 3.21s
+........................................................................ [ 96%]
+..................                                                       [100%]
+522 passed in 3.24s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -179,6 +180,19 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 
 `TestSolveFk` 가 큰 것은 시험 범위 격자 187개를 도는 매개변수 테스트 때문임 —
 **추정 `(0, 0)` 으로도 항상 원래 자세를 찾는지**를 범위 전체에서 확인함.
+
+### `test_leg.py` — 42개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestConstruction` | 6 | 관절·모터 이름, 필드 목록 |
+| `TestCoordinates` | 4 | cal ↔ raw, offset, sign |
+| `TestAnkle` | 8 | IK 연동, 통째 거부, 실행된 자세 |
+| `TestSafety` | 9 | cal 공간 한계, NaN, 점프, 카운터 |
+| `TestPipeline` | 7 | 계산·전송·수거 분리 |
+| `TestCalibration` | 5 | 미실측 거부 |
+| `TestLifecycle` | 2 | 예외 중 토크 차단 |
+| `TestMirroredLeg` | 1 | 좌우 대칭 |
 
 ---
 
@@ -450,6 +464,31 @@ assert ankle.solve_ik(*other, enforce_envelope=False) == (a1, a2)
 이게 성립해야 보행 궤적 한 벌로 양다리를 움직일 수 있음. 좌표만 뒤집고 부호를
 그대로 두면 근사로만 맞음.
 
+### `test_limit_is_applied_in_cal_space` — 경계의 순서
+
+```python
+cal["knee"] = MotorCalibration(motor_id=-1, sign=-1.0)
+commands = leg.build_commands({"knee": 200.0})
+
+assert leg.last_sent["knee"] == pytest.approx(74.79 - 3.0)         # cal 로 잘림
+assert commands[10].position_deg == pytest.approx(-(74.79 - 3.0))  # 그 뒤에 raw
+```
+
+한계가 cal 공간에 있으므로 **검사가 변환보다 먼저여야 함.** raw 로 내린 뒤에
+검사하면 `sign` 이 -1 인 관절에서 부호가 뒤집혀 한계가 반대로 걸림 (이슈 #2).
+
+### `test_unreachable_drops_both` — 발목은 통째로
+
+IK 가 안 풀리면 두 모터 다 직전 명령을 유지함. 한쪽만 새 명령을 받으면 두 로드가
+서로 다른 자세를 요구해 관절이 비틀림.
+
+한계에 잘리는 것은 다름 — 잘린 각도 쌍도 대응하는 발 자세가 있으므로 개별로
+처리해도 됨.
+
+### `test_build_does_not_touch_can` — 이슈 #10
+
+계산이 프레임을 하나도 안 보냄. 버스가 둘일 때 계산을 먼저 몰 수 있는 근거임.
+
 ### `test_all_keys_always_present`
 
 카운터가 0이어도 모든 키를 출력하는지. 필드가 나타났다 사라지면 PlotJuggler
@@ -461,7 +500,7 @@ assert ankle.solve_ik(*other, enforce_envelope=False) == (a1, a2)
 
 | 대상 | 사유 |
 |---|---|
-| `robots/` | 아직 작성 전 (6단계) |
+| `robots/humanoid.py` | 아직 작성 전. 양다리를 묶을 때 |
 | `telemetry/` | 아직 작성 전 (7단계) |
 | `control/` | 아직 작성 전 (8단계) |
 | `scripts/bringup.py` | 아직 작성 전 (9단계) |

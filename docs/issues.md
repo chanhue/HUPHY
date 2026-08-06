@@ -220,27 +220,37 @@ NaN 검사는 전 계층에 없음.
 
 ---
 
-## 🔴 #3 — `calibrate()`가 `Robot` ABC 계약에 없음
+## 🟢 #3 — `calibrate()` 와 `is_calibrated` 가 `Robot` 계약에 있음
 
-### 무엇
+**해결됨** — `robots/base.py` 의 `Robot` ABC 에 둘 다 추상 멤버로 넣음.
 
-`SingleLeg`에는 `calibrate()`가 있지만 `Robot` 추상 클래스가 요구하지 않는다.
+### 왜 계약에 있어야 하나
 
-### 근거
+각 로봇이 제멋대로 판정하면 호출부가 **"이 로봇은 준비됐나" 를 물어볼 공통 방법이
+없어짐.** 미실측 상태로 토크를 넣는 것이 가장 위험한데, 그걸 막는 판정이 구현마다
+다르면 막히지 않는 구현이 하나쯤 생김.
 
-`git show main:src/huphy/robots/base.py` — 추상 메서드 목록에 없음.
-LeRobot의 `robots/robot.py:141`은 `@abc.abstractmethod def calibrate()`로 강제한다.
+LeRobot 도 `Robot` ABC 에 `is_calibrated` 와 `calibrate()` 를 둠
+(`lerobot/robots/robot.py:135, 141`).
 
-### 영향
+### 지금 구조
 
-새 로봇(`Biped` 등)이 `calibrate()`를 안 만들어도 객체 생성이 통과한다.
-그리고 `connect(calibrate=True)`가 그걸 부르는 순간 `AttributeError`로 죽는다.
+    Robot.is_calibrated     추상 프로퍼티
+    Robot.calibrate()       추상 메서드
 
-**빠뜨린 것을 객체 생성 시점에 잡는 게 ABC의 존재 이유인데, 이 메서드는 그물에서 빠져 있다.**
+`Leg` 의 구현은 **둘 다** 봄.
 
-### 조치
+    config.is_configured            한계와 게인이 채워졌는지
+    not unmeasured(calibration)     영점 메모가 남아 있는지
 
-6단계에서 `Robot` ABC에 추가. 한 줄이면 된다.
+게인만 있으면 어디까지 가도 되는지 모르고, 한계만 있으면 토크가 안 나감.
+
+`Leg.enable()` 이 이 판정을 보고 거부함. 커미셔닝 단계에서는
+`allow_uncalibrated=True` 로 만들면 경고만 하고 진행함 -- 실측 전에도 움직여야
+실측을 할 수 있기 때문임.
+
+`calibrate()` 는 파일을 다시 읽는 것까지만 함. 재는 절차 자체는 사람이
+`scripts/commission.py` 로 함.
 
 ---
 
@@ -272,176 +282,114 @@ import 그래프 추출 결과 — `control/loop.py`로 들어오는 화살표�
 
 ---
 
-## 🔴 #5 — `side` 하나가 종류·개체·기하 세 가지를 겸하고 있음
+## 🟢 #5 — 종류·개체·기하를 나눔
 
-### 무엇
+**해결됨** — `config/schema.py` 의 `LimbConfig` 가 셋을 따로 가짐.
 
-세 개념이 서로 다른데 `config.side` 하나로 뭉쳐 있다.
+### 무엇이었나
 
-| 개념 | 뜻 | 예 |
-|---|---|---|
-| **종류** (`name`) | 코드가 같은 것들 | `"single_leg"` |
-| **개체** (`id`) | 이 물리적 부품 | `"left"`, `"right"`, `"right_spare"` |
-| **기하** (`side`) | 좌우 미러링 | `"left"`, `"right"` |
+값 하나가 세 가지를 겸하면 확장할 때 막힘.
 
-현재 `side`가 쓰이는 곳:
+    종류   어떤 기구학을 쓰는지        다리냐 팔이냐
+    개체   이 로봇에서 부르는 이름     같은 종류가 둘 이상일 때 구분
+    기하   거울상인지                  좌우 대칭 여부
 
-| 위치 | 실제로는 어느 개념 |
-|---|---|
-| `AnkleKinematics(side)` | **기하** — `x → -x` 미러링 |
-| `calibration_path` 선택 | **개체** |
-| 로그 `f"[{self.config.side}]"` | **개체** |
-| `name = f"{side}_leg"` | **종류 + 개체 뒤섞임** |
+허리처럼 좌우가 없는 부위가 생기면 "왼쪽도 오른쪽도 아님" 을 표현할 수 없음.
 
-그리고 `name`이 클래스 변수가 아니라 추상 property다.
+### 지금 구조
 
-```python
-SingleLeg.name        # <property object>  ← 객체 없이 알 수 없다
-leg.name              # "right_leg"
-```
+    limbs:
+      right_leg:        <- 개체 이름. 사전의 키
+        kind: leg       <- 종류
+        side: right     <- 기하. 없어도 됨
 
-### 근거
+개체 이름을 키로 둔 것은 같은 이름이 둘일 수 없게 하려는 것임.
 
-LeRobot `BiSOFollower.__init__`이 하위 로봇에 id를 만들어 내려준다:
+`side` 는 "거울상이다" 라는 사실만 적음. **실제 부호 뒤집기는 캘리브레이션의
+`sign` 이 함** -- 그건 재서 얻는 값이라 설정에 올 수 없음. 발목 링키지의 거울상은
+`AnkleGeometry.mirrored()` 가 따로 다룸.
 
-```python
-left_arm_config = SOFollowerRobotConfig(
-    id=f"{config.id}_left" if config.id else None,
-    port=config.left_arm_config.port,
-    ...
-)
-self.left_arm = SOFollower(left_arm_config)
-```
-
-둘 다 `name = "so_follower"`이고, 캘리브레이션은 `{name}/{id}.json`으로 자동 분리된다.
-
-### 영향
-
-**양다리 + CAN 버스 2개 구성에서 바로 걸린다.** 이 프로젝트는 왼다리 can0,
-오른다리 can1로 갈 예정이므로 "같은 종류 2개, 각자 다른 버스·캘리브레이션"이
-정확히 type/id 상황이다.
-
-**`side`와 `id`가 갈라지는 실제 경우 — 예비 다리 교체**
-
-오른쪽 자리에 다른 물리적 다리를 끼우면:
-- `side = "right"` — 기하는 그대로 (미러링 동일)
-- `id = "right_spare"` — **캘리브레이션은 달라야 한다** (개체마다 sign/offset/limit가 다름)
-
-지금 구조면 `side`로 캘리브레이션 파일을 고르므로 덮어쓰거나 손으로 바꿔야 한다.
-
-그 외:
-- 로봇 목록 생성, 설정 레지스트리 도입 시 `name`이 클래스 변수여야 한다
-
-### 조치
-
-| 필드 | 어디에 | 역할 |
-|---|---|---|
-| `name = "single_leg"` | **클래스 변수** | 종류 |
-| `id` | `LegConfig`에 신규 | 개체. 캘리브레이션 파일명·로그·텔레메트리 접두사 |
-| `side` | `LegConfig`에 유지 | **기하 전용**으로 의미 축소 |
-
-캘리브레이션 경로를 yaml에 직접 적는 대신 **`{name}/{id}.json` 규약**으로 만들면,
-상위(`Biped`)가 하위 id를 만들어 내려주는 것만으로 자동 분리된다.
-
-```python
-class Biped(Robot):
-    name = "biped"
-    def __init__(self, config):
-        self.left_leg  = SingleLeg(LegConfig(id=f"{config.id}_left",
-                                             channel="can0", side="left", ...))
-        self.right_leg = SingleLeg(LegConfig(id=f"{config.id}_right",
-                                             channel="can1", side="right", ...))
-```
+`RobotConfig.limbs_of_kind("leg")` 로 종류별로 골라낼 수 있음. 팔이 붙어도 그대로
+동작함.
 
 ---
 
-## 🔴 #6 — `SingleLeg`/`CanBus`에 컨텍스트 매니저·소멸자가 없음
+## 🟢 #6 — 컨텍스트 매니저
 
-### 무엇
+**해결됨** — 세 계층 전부에 있음.
 
-`__enter__`/`__exit__`/`__del__`이 `UdpTelemetry`와 `CsvLogger`에만 있다.
-**정작 토크를 물고 있는 `SingleLeg`에는 없다.**
+    CanBus       __enter__ / __exit__
+    MotorsBus    ABC 에 기본 구현
+    Robot        ABC 에 기본 구현
 
-### 영향
+### 왜 필요한가
 
-라이브러리로 쓸 때 예외가 나면 토크가 물린 채 남는다.
+제어 중 예외가 나면 **모터가 마지막 명령을 계속 유지함.** 명령을 갱신하는 코드가
+죽었으므로 사람이 전원을 뽑을 때까지 다리가 힘을 주고 있음.
 
-```python
-leg = build_leg(cfg)
-leg.connect()
-leg.bus.enable_torque()
-do_something()          # ← 예외
-# disconnect가 안 불린다. 모터는 계속 힘을 준다.
-```
+    with leg:
+        leg.enable()
+        raise RuntimeError(...)     # 여기서 터져도 토크가 끊김
 
-이족 로봇은 토크가 물린 채 방치되면 관절이 하드스톱을 밀거나 과열된다.
+### 정리 순서
 
-### 조치
+`RobStrideBus.disconnect()` 가 **토크를 먼저 끊고** 채널을 닫음. 순서가 반대면
+채널이 닫힌 뒤라 정지 명령을 보낼 방법이 없어짐.
 
-6단계에서 `SingleLeg`에 `__enter__`/`__exit__`/`__del__`,
-3단계에서 `CanBus`에 `__enter__`/`__exit__` 추가.
-`disconnect()`가 이미 토크 차단까지 하므로 감싸기만 하면 된다.
+토크 차단이 실패해도 채널은 반드시 닫음 -- 여기서 예외를 올리면 정리가 중간에 멈춰
+소켓이 열린 채로 남고, 다음 실행 때 채널을 못 엶.
+
+### 고정한 것
+
+    test_disconnects_even_on_exception          MotorsBus
+    test_context_manager_closes_on_exception    CanBus
+    test_disconnect_stops_torque_before_closing RobStrideBus
+    test_context_manager_disconnects_on_exception  Leg
+
+`__del__` 은 두지 않음. 가비지 컬렉션 시점이 정해져 있지 않아 언제 끊길지 알 수
+없고, 인터프리터 종료 중에는 import 가 이미 정리되어 동작을 보장할 수 없음.
 
 ---
 
-## 🔴 #10 — `send_action`이 계산·전송·수거를 분리하지 않아 양다리에서 동기가 틀어짐
+## 🟢 #10 — 계산·전송·수거를 나눔
 
-**발견**: 왼다리 can0 / 오른다리 can1 구성을 논의하면서
+**해결됨** — 두 계층에서 나뉨.
 
-### 무엇
+    CanBus.send_many / drain / drain_all
+    Leg.build_commands / send / collect / send_action
 
-현재 `SingleLeg.send_action()`이 세 가지를 한 번에 한다.
+### 무엇이었나
 
-```python
-def send_action(self, action):
-    frames = ...                    # ① 계산 (IK, 가드, 인코딩) -- CAN 안 씀
-    bus.sync_write_mit(frames)      # ② 전송 + ③ 드레인
-```
+세 가지를 한 함수가 하면 버스가 둘일 때 두 다리의 명령 시각이 벌어짐.
 
-버스가 하나면 문제없다. **버스가 둘이면 순차로 돌아 두 다리의 명령 시각이 벌어진다.**
+    can0 (왼다리)  [계산][전송][─── 수거 대기 ───]
+    can1 (오른다리)                                [계산][전송]
+                                                   ^ 여기서야 시작
 
-```
-can0 (왼다리)  [계산]████████ 0.8ms
-can1 (오른다리)         [계산]████████ 0.8ms
-                        ↑ 왼다리 계산 + 전송이 끝난 뒤에야 시작
-```
+두 버스는 물리적으로 독립이라 진짜로 겹쳐 보낼 수 있는데 그 병렬성을 못 씀.
+**수거가 더 비쌈** -- `recv()` 는 큐가 비면 타임아웃만큼 블로킹함.
 
-### 근거
+### 지금 구조
 
-- CAN 프레임 하나 ≈ **0.13 ms** (1 Mbps, 11-bit ID + 8바이트 + 스터핑)
-- 6개 ≈ 0.8 ms. 여기에 계산 시간(발목 IK 포함)이 더해진다
-- 100 Hz(10 ms)에서 8% 이상
+    left = left_leg.build_commands(action_left)     # 계산은 CAN 을 안 씀
+    right = right_leg.build_commands(action_right)
+    left_leg.send(left)                              # 전송을 몰아서
+    right_leg.send(right)
+    left_leg.collect()                               # 그 다음에 수거
+    right_leg.collect()
 
-두 버스는 **물리적으로 독립**이라 진짜 병렬 전송이 가능한데, 지금 구조로는 못 살린다.
+다리 하나뿐이면 `send_action()` 하나로 충분함 -- 셋을 순서대로 부름.
 
-### 영향
+### 고정한 것
 
-서 있기만 하면 무시할 만하다. **보행 중 양다리 동기가 필요한 국면에서 유의미하다.**
+    test_build_does_not_touch_can      계산이 프레임을 안 보냄
+    test_send_all_precedes_drain_all   전송이 수거보다 먼저 (버스 공유 이벤트 순서)
 
-지금은 다리가 하나라 무해하다.
+### 남은 것
 
-### 조치
-
-세 단계를 분리한다.
-
-```python
-# Biped.send_action
-left_frames  = self.left_leg.build_frames(left_action)     # ① 계산 (둘 다 먼저)
-right_frames = self.right_leg.build_frames(right_action)
-
-self.left_leg.bus.send(left_frames)                        # ② 전송 (연속)
-self.right_leg.bus.send(right_frames)
-
-self.left_leg.bus.drain()                                  # ③ 수거
-self.right_leg.bus.drain()
-```
-
-**드레인이 더 큰 문제다** — `drain()`은 큐가 빌 때까지 읽고 마지막 `recv`가
-타임아웃만큼 블로킹된다. 두 버스를 순차 드레인하면 2배다.
-
-**버스마다 RX 전용 스레드**를 두면 제어 루프에서 드레인이 사라지고 계산+전송만 남는다.
-다리 하나일 때는 선택이지만 양다리에서는 필요에 가까워진다.
-(→ `src/huphy/motors/README.md`의 "RX 처리 3단계")
+지금은 순차 전송이라 프레임 6개 사이의 지연(약 0.8 ms)은 남음. 양다리에서 이것이
+문제가 되면 버스마다 수신 스레드를 두어 제어 루프에서 수거를 없애야 함. 그때
+`canbus.py` 의 락 구성을 다시 봐야 함.
 
 ---
 
