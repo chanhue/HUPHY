@@ -10,6 +10,6 @@
 """
 
 from . import motions
-from .loop import ControlLoop, LoopStats, Mode, Motion
+from .loop import ControlLoop, LoopStats, Mode, Motion, precise_sleep
 
-__all__ = ["motions", "ControlLoop", "LoopStats", "Mode", "Motion"]
+__all__ = ["motions", "ControlLoop", "LoopStats", "Mode", "Motion", "precise_sleep"]

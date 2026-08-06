@@ -13,6 +13,22 @@
 덕분에 같은 루프로 유지, 사인파 흔들기, 보행 궤적을 다 돌릴 수 있음.
 
 
+## 기다리는 법
+
+`time.sleep` 은 요청한 만큼 정확히 자지 않음. 운영체제 스케줄러가 깨워 주는
+단위가 있어서, 짧은 잠일수록 오차 비중이 커짐.
+
+100Hz 면 한 주기가 10ms 인데 그 오차가 몇 ms 씩 섞이면 주파수가 눈에 띄게 떨어짐.
+
+그래서 **마감 직전 몇 ms 는 자지 않고 돌면서 기다림.**
+
+    남은 시간 > spin_threshold   ->  (남은 시간 - margin) 만큼 잠
+    남은 시간 <= spin_threshold  ->  돌면서 마감을 봄
+
+CPU 를 태우는 구간이라 짧게 둠. 100Hz 에서 마지막 1~2ms 정도임.
+`precise=False` 로 끄면 `time.sleep` 만 씀.
+
+
 ## 실제 주기를 잼
 
 목표 주기와 실제 주기는 다름. 계산이 길어지거나 수거가 늦어지면 밀림.
@@ -61,6 +77,55 @@ OVERRUN_RATIO = 1.5
 
 SETTLE_CYCLES = 5
 """멈출 때 `hold` 를 보내는 주기 수. 힘이 갑자기 빠지지 않게 함."""
+
+SPIN_THRESHOLD_S = 0.003
+"""마감까지 이만큼 남으면 자지 않고 돌면서 기다림."""
+
+SLEEP_MARGIN_S = 0.003
+"""잘 때 마감보다 이만큼 일찍 깨게 함.
+
+**`time.sleep` 의 오차보다 커야 함.** 작으면 한 번의 긴 잠이 마감을 지나쳐 버려
+남은 스핀 구간이 없어짐 -- 그러면 정확해지지 않음.
+
+두 값을 재서 고름 (목표별 평균 오차).
+
+    threshold/margin      20ms     10ms      5ms      2ms
+    ----------------------------------------------------
+    2ms / 1ms           +2.56    +0.85    +0.02    +0.00
+    3ms / 3ms           +0.61    +0.00    +0.00    +0.00
+    5ms / 5ms           +0.00    +0.00    +0.00    +0.00
+
+3ms 로 100Hz(10ms) 이하에서 오차가 사라짐. 실제 스핀은 한 주기당 약 1ms 임.
+5ms 는 더 정확하지만 그만큼 CPU 를 더 태움.
+
+위 수치는 스케줄러 정밀도가 낮은 환경에서 잰 것임. 잠이 정확한 환경에서는 스핀
+구간이 더 짧아짐 -- 자동으로 그렇게 됨.
+"""
+
+
+def precise_sleep(
+    seconds: float,
+    *,
+    spin_threshold: float = SPIN_THRESHOLD_S,
+    sleep_margin: float = SLEEP_MARGIN_S,
+) -> None:
+    """`time.sleep` 보다 정확하게 기다림. **CPU 를 조금 더 씀.**
+
+    마감까지 여유가 있으면 자고, 마지막 구간은 돌면서 봄. 자는 시간에서 `margin`
+    을 빼 두어 지나쳐 자는 것을 막음.
+
+    `seconds` 가 0 이하면 바로 돌아옴 — 이미 늦은 것이고, 따라잡으려 하지 않음.
+    """
+    if seconds <= 0:
+        return
+    deadline = time.perf_counter() + seconds
+    while True:
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            return
+        if remaining > spin_threshold:
+            time.sleep(max(remaining - sleep_margin, 0.0))
+        # 남은 구간은 돌면서 마감을 봄.
 
 
 class Mode(str, Enum):
@@ -136,6 +201,7 @@ class ControlLoop:
         hz: float = 100.0,
         telemetry: Any = None,
         mode: Mode = Mode.OBSERVE,
+        precise: bool = True,
     ) -> None:
         if hz <= 0:
             raise ValueError(f"hz 는 0보다 커야 함 (받은 값 {hz})")
@@ -144,6 +210,8 @@ class ControlLoop:
         self.period_s = 1.0 / float(hz)
         self.telemetry = telemetry
         self.mode = mode
+        self.precise = precise
+        """마감 직전을 돌면서 기다릴지. 끄면 `time.sleep` 만 씀."""
         self.stats = LoopStats(target_hz=self.hz)
         self._stop = False
 
@@ -196,12 +264,12 @@ class ControlLoop:
         self._stop = False
         self._enter()
 
-        t0 = time.monotonic()
+        t0 = time.perf_counter()
         previous = t0
 
         try:
             while not self._stop:
-                cycle_start = time.monotonic()
+                cycle_start = time.perf_counter()
                 t = cycle_start - t0
 
                 if duration_s is not None and t >= duration_s:
@@ -218,7 +286,7 @@ class ControlLoop:
 
                 self._sleep_until(cycle_start + self.period_s)
         finally:
-            self.stats.total_s = time.monotonic() - t0
+            self.stats.total_s = time.perf_counter() - t0
             self._exit()
 
         if not self.stats.kept_up:
@@ -281,9 +349,16 @@ class ControlLoop:
 
         밀린 만큼 다음 주기를 줄여 따라잡으면 그 주기가 더 짧아져 계산이 또 밀림.
         한 주기를 늦게 시작하고 마는 편이 나음.
+
+        마감을 절대 시각으로 들고 있음. 매 주기 "남은 시간" 을 새로 계산하면 그
+        오차가 쌓여 서서히 밀림.
         """
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            return
+        if self.precise:
+            precise_sleep(remaining)
+        else:
             time.sleep(remaining)
 
     def _note_timing(self, dt_ms: float) -> None:

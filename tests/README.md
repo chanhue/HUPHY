@@ -14,7 +14,7 @@ tests/
 ├── test_ankle.py           kinematics/ankle.py        149개
 ├── test_leg.py             robots/leg.py               42개
 ├── test_telemetry.py       telemetry/                  43개
-└── test_control.py         control/                    40개
+└── test_control.py         control/                    43개
 ```
 
 ## 실행
@@ -25,8 +25,8 @@ PYTHONPATH=src python3 -m pytest tests -q
 
 ```
 ........................................................................ [ 93%]
-.....................................                                    [100%]
-613 passed in 3.61s
+........................................                                 [100%]
+616 passed in 3.77s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -210,14 +210,14 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬화와 반올림이 실제로
 왕복하는지 확인함.
 
-### `test_control.py` — 40개
+### `test_control.py` — 43개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
 | `TestMotions` | 13 | 순수 함수. 하드웨어 없이 그냥 부름 |
 | `TestMode` | 6 | 관찰이 토크를 끊고 시작, 관찰도 읽음 |
 | `TestShutdown` | 6 | hold 후 토크 차단, 예외 중에도 |
-| `TestTiming` | 7 | 주기 측정, 꾸준한 느림 |
+| `TestTiming` | 10 | 주기 측정, 꾸준한 느림, 정밀 대기 |
 | `TestTelemetryHookup` | 5 | 기록 실패가 루프를 안 멈춤 |
 | `TestStep` | 2 | 한 걸음씩 |
 
@@ -266,7 +266,7 @@ def send(self, msg):
 | 모터가 실제로 응답하는지 | 실물 |
 | 게인 값이 적절한지 | 실물 |
 | `zero_sta` 가 켜져 있는지 | 실물 |
-| 실제 제어 주기가 유지되는지 | 실물 (`time.sleep` 정밀도와 부하에 달림) |
+| 실제 제어 주기가 유지되는지 | 실물 (스케줄러 정밀도와 부하에 달림) |
 
 ---
 

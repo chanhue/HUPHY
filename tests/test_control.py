@@ -8,7 +8,10 @@
 
 import pytest
 
+import time
+
 from huphy.control import ControlLoop, LoopStats, Mode, motions
+from huphy.control.loop import precise_sleep
 
 
 # ===========================================================================
@@ -329,6 +332,39 @@ class TestTiming:
         robot = FakeRobot(missing=(12,))
         stats = ControlLoop(robot, hz=1000.0, mode=Mode.OBSERVE).run(max_cycles=4)
         assert stats.missing_cycles == 4
+
+    def test_precise_sleep_beats_plain_sleep(self):
+        """`time.sleep` 은 요청한 만큼 정확히 자지 않음.
+
+        100Hz 면 한 주기가 10ms 인데 그 오차가 몇 ms 씩 섞이면 주파수가 눈에 띄게
+        떨어짐. 마감 직전을 돌면서 기다려 이것을 없앰.
+
+        환경에 따라 `time.sleep` 이 이미 정확할 수 있으므로 **더 낫거나 같음**만
+        확인함 -- 정확한 환경에서는 스핀 구간이 저절로 짧아짐.
+        """
+        target = 0.005
+
+        def measure(fn):
+            worst = 0.0
+            for _ in range(20):
+                start = time.perf_counter()
+                fn(target)
+                worst = max(worst, time.perf_counter() - start)
+            return worst
+
+        assert measure(precise_sleep) <= measure(time.sleep) + 1e-4
+
+    def test_precise_sleep_returns_immediately_when_late(self):
+        """이미 늦었으면 따라잡으려 하지 않음."""
+        start = time.perf_counter()
+        precise_sleep(-1.0)
+        assert time.perf_counter() - start < 0.001
+
+    def test_precise_can_be_turned_off(self, robot):
+        """스핀은 CPU 를 태움. 끌 수 있어야 함."""
+        loop = ControlLoop(robot, hz=1000.0, mode=Mode.OBSERVE, precise=False)
+        assert loop.precise is False
+        assert loop.run(max_cycles=3).cycles == 3
 
     def test_does_not_catch_up_after_a_late_cycle(self, robot):
         """밀린 만큼 다음 주기를 줄여 따라잡으면 그 주기가 더 짧아져 또 밀림.
