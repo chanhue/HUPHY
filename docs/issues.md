@@ -254,31 +254,31 @@ LeRobot 도 `Robot` ABC 에 `is_calibrated` 와 `calibrate()` 를 둠
 
 ---
 
-## 🔴 #4 — 텔레메트리가 브링업 메뉴에 연결되지 않음
+## 🟡 #4 — 텔레메트리를 제어 루프에 연결하는 것이 남음
 
-### 무엇
+**부분 해결** — `telemetry/` 가 만들어졌고 `Robot` 에서 스냅샷을 뽑을 수 있음.
+제어 루프에 거는 것은 8단계에 남음.
 
-`control/loop.py`(`LegControlLoop`)를 **어디에서도 import하지 않는다.**
-연쇄적으로 `SingleLeg.send_action()`, `telemetry_snapshot()`, `RejectCounters`가
-실제로는 한 번도 실행되지 않는다.
+### 무엇이었나
 
-### 근거
+관측 경로가 제어 경로와 따로 놀면, 사람이 손으로 움직여 볼 때는 그래프가 안 나오고
+자동 제어 때만 나옴. **게인을 튜닝하려면 손으로 움직이면서 봐야 함.**
 
-import 그래프 추출 결과 — `control/loop.py`로 들어오는 화살표가 없음.
-`scripts/bringup.py`는 `TelemetrySink`를 만들지만 `sink.close()`만 부른다.
+### 지금 구조
 
-### 영향
+    snapshot.build(robot, t=...)   로봇에서 읽기만 함. 통신하지 않음
+    Telemetry.record()             UDP 와 CSV 로 한 번에 내보냄
 
-**지금 상태로 브링업 메뉴를 써도 PlotJuggler에 데이터가 흐르지 않는다.**
-게인 튜닝을 할 수 없다.
+`build()` 가 `Robot` 계약만 씀 (`get_observation`, `last_sent`, `counters`).
+따라서 **어느 경로에서 부르든 같은 값이 나옴** -- 제어 루프든, 대화형 메뉴든,
+커미셔닝이든.
 
-[monitoring.md](monitoring.md) §4.1-(6)에서 미리 지적한 "메뉴 경로는 제어 루프를
-타지 않는다" 문제와 같다.
+### 남은 것
 
-### 조치
+`control/loop.py` 가 매 주기 `record()` 를 부르게 하는 것 (8단계).
+`scripts/bringup.py` 의 메뉴가 제어 루프를 타게 하는 것 (9단계).
 
-9단계에서 메뉴가 제어 루프를 타게 하거나, `_move_to` 루프 안에서
-`leg.telemetry_snapshot()`을 만들어 sink로 넘긴다.
+메뉴가 버스를 직접 호출하면 그 경로에서만 텔레메트리가 빠짐. 메뉴도 루프를 거쳐야 함.
 
 ---
 

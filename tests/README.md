@@ -12,7 +12,8 @@ tests/
 ├── test_calibration.py     calibration/                35개
 ├── test_commission_cli.py  scripts/commission.py       30개
 ├── test_ankle.py           kinematics/ankle.py        149개
-└── test_leg.py             robots/leg.py               42개
+├── test_leg.py             robots/leg.py               42개
+└── test_telemetry.py       telemetry/                  36개
 ```
 
 ## 실행
@@ -22,9 +23,9 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-........................................................................ [ 96%]
-..................                                                       [100%]
-522 passed in 3.24s
+........................................................................ [ 90%]
+......................................................                   [100%]
+558 passed in 3.30s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -193,6 +194,19 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestCalibration` | 5 | 미실측 거부 |
 | `TestLifecycle` | 2 | 예외 중 토크 차단 |
 | `TestMirroredLeg` | 1 | 좌우 대칭 |
+
+### `test_telemetry.py` — 36개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestFieldNames` | 5 | 실행 전 목록, `build` 와 일치 |
+| `TestBuild` | 8 | 오차, 실제로 나간 목표, 없는 카운터 |
+| `TestUdp` | 8 | 진짜 소켓 왕복, 반올림, MTU, 실패 |
+| `TestCsv` | 8 | 헤더, 열 순서, flush, 실패 |
+| `TestTelemetry` | 6 | 둘이 같은 스냅샷을 소비 |
+
+UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬화와 반올림이 실제로
+왕복하는지 확인함.
 
 ---
 
@@ -489,6 +503,29 @@ IK 가 안 풀리면 두 모터 다 직전 명령을 유지함. 한쪽만 새 �
 
 계산이 프레임을 하나도 안 보냄. 버스가 둘일 때 계산을 먼저 몰 수 있는 근거임.
 
+### `test_matches_what_build_produces` — 스키마가 한 곳
+
+```python
+assert set(snapshot.build(robot, t=0.0)) == set(snapshot.field_names(robot))
+```
+
+두 군데에서 필드를 만들면 반드시 어긋남 — CSV 헤더에는 있는데 UDP 에는 없는 값이
+생기고, 어느 쪽이 맞는지 알 수 없어짐.
+
+### `test_one_leg_fits_in_a_packet` — MTU
+
+다리 하나가 약 1.3 KB 임. 둘을 합치면 넘쳐서 조각나고, **조각 하나만 잃어도 패킷
+전체가 버려짐.** 팔다리마다 한 패킷씩 보내는 근거임.
+
+### `test_send_failure_does_not_raise` — 관측이 제어를 멈추면 안 됨
+
+소켓을 망가뜨리고 보내 봄. 예외 대신 세기만 함. CSV 도 같음 — 디스크가 가득 차도
+제어 루프는 계속 돌아야 함.
+
+### `test_close_flushes`
+
+버퍼에 남은 몇 줄이 사라지면 하필 사고 직전 부분을 잃음.
+
 ### `test_all_keys_always_present`
 
 카운터가 0이어도 모든 키를 출력하는지. 필드가 나타났다 사라지면 PlotJuggler
@@ -501,7 +538,6 @@ IK 가 안 풀리면 두 모터 다 직전 명령을 유지함. 한쪽만 새 �
 | 대상 | 사유 |
 |---|---|
 | `robots/humanoid.py` | 아직 작성 전. 양다리를 묶을 때 |
-| `telemetry/` | 아직 작성 전 (7단계) |
 | `control/` | 아직 작성 전 (8단계) |
 | `scripts/bringup.py` | 아직 작성 전 (9단계) |
 
