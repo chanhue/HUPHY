@@ -1,60 +1,13 @@
 {
-  "schema_version": 1,
-  "note": "오른쪽 다리. limit_*는 원본 robot_constant.JOINT_LIMITS_DEG에서 모터 id 기준으로 그대로 옮긴 값(raw 공간)이며 실측으로 보인다. sign/offset/kp/kd는 아직 미실측 -- kp=0이므로 is_complete()가 False를 반환하고, 이 상태로 제어하려면 allow_uncalibrated=True가 필요하다. zero_reference는 기계영점(0xFE)을 어느 자세에서 잡았는지 사람이 적는 칸이다.",
+  "schema_version": 2,
+  "limb": "right_leg",
+  "note": "오른다리 실측값. 조립을 재서 얻는 것만 담음 -- sign, offset_deg, zero_reference. 한계와 게인은 재는 값이 아니라 적는 값이라 robot.yaml 에 있음 (이슈 #2). 관절 이름으로 키를 맞춤: CAN id 는 바뀔 수 있지만 관절 자리는 그대로임. sign/offset 은 아직 미실측이라 항등변환이고, 이 상태에서는 cal 공간과 raw 공간이 같은 숫자임.",
   "motors": {
-    "7": {
-      "sign": 1.0,
-      "offset_deg": 0.0,
-      "limit_lo_deg": -117.07,
-      "limit_hi_deg": 21.07,
-      "kp": 0.0,
-      "kd": 0.0,
-      "zero_reference": ""
-    },
-    "8": {
-      "sign": 1.0,
-      "offset_deg": 0.0,
-      "limit_lo_deg": -5.51,
-      "limit_hi_deg": 79.64,
-      "kp": 0.0,
-      "kd": 0.0,
-      "zero_reference": ""
-    },
-    "9": {
-      "sign": 1.0,
-      "offset_deg": 0.0,
-      "limit_lo_deg": -41.90,
-      "limit_hi_deg": 31.09,
-      "kp": 0.0,
-      "kd": 0.0,
-      "zero_reference": ""
-    },
-    "10": {
-      "sign": 1.0,
-      "offset_deg": 0.0,
-      "limit_lo_deg": -20.65,
-      "limit_hi_deg": 74.79,
-      "kp": 0.0,
-      "kd": 0.0,
-      "zero_reference": ""
-    },
-    "11": {
-      "sign": 1.0,
-      "offset_deg": 0.0,
-      "limit_lo_deg": -79.77,
-      "limit_hi_deg": 43.16,
-      "kp": 0.0,
-      "kd": 0.0,
-      "zero_reference": ""
-    },
-    "12": {
-      "sign": 1.0,
-      "offset_deg": 0.0,
-      "limit_lo_deg": -12.50,
-      "limit_hi_deg": 126.66,
-      "kp": 0.0,
-      "kd": 0.0,
-      "zero_reference": ""
-    }
+    "hipz":     {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
+    "hipx":     {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
+    "hipy":     {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
+    "knee":     {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
+    "ankle_a1": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
+    "ankle_a2": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""}
   }
 }

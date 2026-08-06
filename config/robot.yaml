@@ -1,62 +1,71 @@
-# 로봇 토폴로지 + 안전 파라미터.
+# 로봇 구성 — 사람이 적는 것.
 #
-# 여기에는 "조립 구성"만 둔다. 벤더 사양(인코딩 범위, 명령 바이트)은
-# src/huphy/motors/robstride/tables.py 에, 실측값(sign/offset/limits/gains)은
-# config/calibration/*.json 에 있다.
+# 여기 있는 값은 배선·기구 설계·튜닝에서 옴. 조립을 재서 얻는 값(sign, offset,
+# zero_reference)은 calibration/*.json 에 있음. 무효화 시점이 달라 파일을 나눔 --
+# 모터를 다시 달면 캘리브레이션만 무효가 되고, 기구 설계가 바뀌면 이 파일만 바뀜.
 #
-# 모터 id <-> 관절 매핑: "7=hipz 8=hipx 9=hipy 10=knee"
+# 벤더 사양(인코딩 범위, 명령 바이트)은 src/huphy/motors/robstride/tables.py 에 있음.
 #
-#    원본 robot_constant.py는 주석과 코드가 서로 달랐다.
-#      주석 (상단 토폴로지, JOINT_LIMITS_DEG)  -> 7=hipz 8=hipx 9=hipy  <- 맞음
-#      코드 (_make_leg_specs, hip_knee_ids 언패킹) -> 7=hipy 8=hipx 9=hipz  <- 틀림
-#    즉 코드에서 hipz와 hipy가 뒤바뀌어 있었고, 그 상태로 set_leg_action(hipz=...)을
-#    부르면 모터 9가 움직였다. 여기서는 올바른 쪽(주석)을 따른다.
+# 각도는 전부 cal 공간임 -- 관절 각도이지 모터가 보고하는 raw 값이 아님.
+# src/huphy/motors/README.md 의 "raw 와 cal" 참조.
 
 name: huphy
 
 safety:
-  margins:
-    command_deg: 3.0      # 명령을 한계에서 이만큼 안쪽으로
-    state_deg: 5.0        # 측정값이 이만큼 넘으면 E-STOP
-    near_stop_deg: 8.0    # 이만큼 가까우면 감쇠 전용으로 전환
-  max_cmd_delta_deg: 50.0
-  damping_kd: 1.0
-  enforce_command_limits: true
-  reset_estop_each_state_cycle: true
+  command_margin_deg: 3.0   # 한계에서 이만큼 안쪽까지만 명령함
+  max_delta_deg: 50.0       # 한 주기에 움직일 수 있는 최대 각도
+  enforce_limits: true      # false 는 커미셔닝 전용
 
 telemetry:
-  # host를 비워두면 UDP 송신 비활성. 환경변수 PJ_HOST / PJ_PORT로도 지정 가능.
-  host: null
+  host: null                # 비우면 UDP 송신 안 함
   port: 9870
-  csv_path: ../logs/leg.csv
-  csv_flush_every: 50          # N사이클마다 flush (E-STOP 시에는 즉시)
-  joint_field_decimation: 1    # 관절공간 필드를 N사이클마다 (발목 FK 비용)
+  csv_path: null
+  csv_flush_every: 50
 
-legs:
-  right:
+limbs:
+  # 개체 이름이 키임. kind 는 어떤 기구학을 쓰는지, side 는 거울상인지를 말함.
+  # 셋을 한 필드가 겸하면 팔이나 허리가 붙을 때 막힘 (이슈 #5).
+  right_leg:
+    kind: leg
+    side: right
     channel: can1
     interface: socketcan
     control_hz: 100.0
-    rom_scale: 0.3
     calibration: calibration/right_leg.json
-    motors:
-      - {id: 7,  role: hipz,     model: RS02}
-      - {id: 8,  role: hipx,     model: RS02}
-      - {id: 9,  role: hipy,     model: RS02}
-      - {id: 10, role: knee,     model: RS02}
-      - {id: 11, role: ankle_a1, model: RS00}
-      - {id: 12, role: ankle_a2, model: RS00}
 
-  left:
+    # limits_deg 는 하드스톱 위치임. 여유를 뺀 값이 아니라 하드스톱 자체이고,
+    # safety.command_margin_deg 를 여기서 빼서 명령 구간이 나옴.
+    #
+    # 기구 설계에서 오는 값이라 영점을 어디에 잡았는지와 무관함. 첫 동작 전에 이미
+    # 알고 있어야 하는 값임 -- 다리를 손으로 하드스톱까지 훑는 것이 중력과 감속비
+    # 때문에 불가능하고, 발목은 두 모터가 폐루프로 물려 있어 한쪽만 훑으면 링크가
+    # 물림 (이슈 #2).
+    #
+    # kp/kd 는 아직 미실측이라 0임. 0은 토크 없음이고, 이 상태로는
+    # LimbConfig.is_configured 가 False 라 제어 진입이 막힘 (이슈 #9).
+    motors:
+      hipz:     {id: 7,  model: RS02, limits_deg: [-117.07,  -21.07], kp: 0.0, kd: 0.0}
+      hipx:     {id: 8,  model: RS02, limits_deg: [  -5.51,   79.64], kp: 0.0, kd: 0.0}
+      hipy:     {id: 9,  model: RS02, limits_deg: [ -41.90,   31.09], kp: 0.0, kd: 0.0}
+      knee:     {id: 10, model: RS02, limits_deg: [ -20.65,   74.79], kp: 0.0, kd: 0.0}
+      ankle_a1: {id: 11, model: RS00, limits_deg: [ -79.77,   43.16], kp: 0.0, kd: 0.0}
+      ankle_a2: {id: 12, model: RS00, limits_deg: [ -12.50,  126.66], kp: 0.0, kd: 0.0}
+
+  left_leg:
+    kind: leg
+    side: left
     channel: can0
     interface: socketcan
     control_hz: 100.0
-    rom_scale: 0.3
     calibration: calibration/left_leg.json
+
+    # 아직 연결되지 않았고 한계도 실측 전임. limits_deg 를 비워 두면
+    # Motor.is_configured 가 False 가 되어 제어 진입이 막힘 -- 값이 없는 것과
+    # "제한 없음" 은 다름. 둥근 수를 넣어 두면 실측한 값처럼 보여서 위험함.
     motors:
-      - {id: 1, role: hipz,     model: RS02}
-      - {id: 2, role: hipx,     model: RS02}
-      - {id: 3, role: hipy,     model: RS02}
-      - {id: 4, role: knee,     model: RS02}
-      - {id: 5, role: ankle_a1, model: RS00}
-      - {id: 6, role: ankle_a2, model: RS00}
+      hipz:     {id: 1, model: RS02}
+      hipx:     {id: 2, model: RS02}
+      hipy:     {id: 3, model: RS02}
+      knee:     {id: 4, model: RS02}
+      ankle_a1: {id: 5, model: RS00}
+      ankle_a2: {id: 6, model: RS00}
