@@ -102,42 +102,124 @@ a1의 340°를 −20°로 조용히 고쳐줘서 위 버그가 드러나지 않�
 
 ---
 
-## 🔴 #2 — 한계값이 raw 공간인지 cal 공간인지 코드가 일관되지 않음
+## 🟢 #2 — 한계값이 raw 공간인지 cal 공간인지
 
-**발견**: `right_leg.json`의 필드 설명 중
+**결론: cal 공간.** `motors/base.py` 의 `Motor.limits_deg` 로 확정함.
+설정 파일 반영은 4~5단계에 남음.
 
-### 무엇
+### 두 공간
 
-`limit_lo/hi_deg`는 **raw 공간**으로 정의했는데, 비교하는 쪽이 세 가지로 갈린다.
+raw 는 모터가 CAN 으로 보고하는 각도임. 기준점은 그 모터의 기계 영점이고, 그건
+사람이 `0xFE` 를 누른 그 순간의 자세임.
 
-| 위치 | 비교 값 | 한계 | 판정 |
+cal 은 사람과 기구학이 말하는 관절 각도임. 기준점은 우리가 정한 자세임.
+
+    cal = sign * raw + offset
+
+어긋나는 원인은 둘임.
+
+**기준 자세가 다름 (`offset`)** — 다리가 무거워 `0xFE` 를 정확히 편 자세에서 누를
+수 없음. 무릎을 12도 굽은 상태에서 영점 잡으면:
+
+| 물리적 자세 | raw | cal |
+|---|---|---|
+| 완전히 편 상태 | -12 | 0 |
+| 12도 굽힘 (영점 잡은 자세) | 0 | 12 |
+| 하드스톱 | 62.79 | 74.79 |
+
+**회전 방향이 다름 (`sign`)** — 양다리는 거울상이라, 같은 굽힘에 대해 한쪽은 CW
+한쪽은 CCW 로 돔.
+
+| 물리적 자세 | 오른 무릎 raw | 왼 무릎 raw | cal (양쪽 동일) |
 |---|---|---|---|
-| `send_action` | raw | raw | ✅ |
-| `check_state_bounds` | **cal** | **raw** | ❌ |
-| `update_damping` | **cal** | **raw** | ❌ |
-| `limit_margins` | **cal** | **raw** | ❌ |
-| `motor_to_joint` | **cal** | **raw** | ❌ |
-| `in_range_report` | cal | **cal로 변환** | ✅ |
+| 편 상태 | 0 | 0 | 0 |
+| 45도 굽힘 | +45 | -45 | 45 |
 
-### 근거
+이것이 cal 공간이 존재하는 이유임. 보행 궤적이 "무릎 45도" 라고 하면 양다리가 같은
+동작을 함. raw 로 말하면 다리마다 부호를 뒤집어야 하고, 그걸 잊는 자리가 코드
+곳곳에 생김.
 
-`git show main:src/huphy/robots/leg.py` 의 해당 줄들.
-`cal = sign * raw + offset` 이고 현재 `sign=1.0, offset=0.0` → **`cal == raw`라 우연히 맞는다.**
+감속비 항은 없음 — RobStride 는 출력축 각도를 보고하므로 배율이 필요 없음.
 
-### 영향
+### 무엇이 문제였나
 
-**`sign`이나 `offset`에 실측값을 넣는 순간 E-STOP·감쇠 전환·margin이 전부 틀어진다.**
-잠복 버그다. 지금 값이 항등함수라 안 보일 뿐이다.
+한계값을 raw 로 볼지 cal 로 볼지 정해지지 않아, 비교하는 쪽마다 다른 공간의 값을
+맞대고 있었음. 현재 12개 모터 전부 미실측이라 `sign=1, offset=0` 이고, 따라서
+`cal == raw` 로 두 공간이 같은 숫자임. **어느 쪽으로 해석해도 지금은 똑같이
+동작하므로 드러나지 않음.** 5단계에서 실측값을 넣는 순간 갈라짐.
 
-`sign = -1`이면 문제가 하나 더 있다 — `raw_to_cal(lo) > raw_to_cal(hi)`가 되어
-변환 후 `min/max` 재정렬이 필요하다.
+### 검토한 것 -- LeRobot 은 raw 에 둠
+
+`lerobot/motors/motors_bus.py:175`
+
+    @dataclass
+    class MotorCalibration:
+        id: int
+        drive_mode: int      # sign
+        homing_offset: int   # offset
+        range_min: int       # 한계 -- raw 엔코더 틱
+        range_max: int
+
+한계 검사가 따로 없고 `_unnormalize` 가 겸함 (`motors_bus.py:897`). 정규화 좌표를
+`[-100, 100]` 으로 자르면 raw 가 자동으로 `[range_min, range_max]` 안에 들어옴.
+한계를 넘는 명령을 만들 방법 자체가 없는 구조임.
+
+`ensure_safe_goal_position` (`robots/utils.py:91`) 은 점프 가드 하나뿐이고 위치
+한계와 무관함.
+
+**LeRobot 에서 raw 가 안전한 이유**: 캘리브레이션이 하나의 절차라서 사람이 관절을
+끝까지 훑는 동안 offset 과 range 가 같이 기록됨. 한쪽만 갱신하는 것이 불가능함.
+
+### 왜 그대로 가져올 수 없나
+
+LeRobot 의 range 는 훑어서 얻는 값이고, 본 프로젝트의 값은 설계에서 오는 값임.
+
+| | SO-100 | 휴머노이드 다리 |
+|---|---|---|
+| 손으로 역구동 | 됨 | 중력·감속비 때문에 안 됨 |
+| 하드스톱까지 훑기 | 안전 | 그게 피하려는 사고임 |
+| 관절 독립성 | 각각 독립 | 발목은 두 모터 폐루프 |
+
+발목이 결정적임. `a1` 을 혼자 끝까지 돌리면 링크가 물리므로 **두 모터를 따로 훑는
+절차가 성립하지 않음.** 기록 방식이 여기서 막힘.
+
+따라서 한계는 첫 동작 **전에** 알고 있어야 하고, 그건 설계값임. 설계값은 영점을
+어디에 잡았는지와 무관하므로 cal 공간임.
+
+    LeRobot   한계 = 측정 결과   ->  offset 과 한 몸  ->  raw
+    HUPHY     한계 = 설계 입력   ->  offset 과 무관   ->  cal
+
+하드스톱은 쇳덩어리라 움직이지 않는데, raw 로 적으면 영점을 다시 잡을 때마다 숫자가
+바뀜. 영점을 3도 다른 자세에서 다시 잡으면 무릎 하드스톱의 raw 는 62.79 에서 59.79
+가 되지만 cal 은 74.79 로 그대로임.
 
 ### 조치
 
-재작성 시 **raw로 통일**한다. 한계는 무동력으로 하드스톱까지 밀어 raw를 읽어 얻는
-값이라 raw가 자연스럽고, **사람에게 보여주는 지점에서만** cal로 변환한다.
+`Motor.limits_deg` (cal 공간, `Optional`) 로 확정함. `MotorCalibration` 은 실측값
+(`sign`/`offset`/`zero_reference`) 만 담음.
 
-5~6단계에서 결정을 확정하고 전 코드에 일관되게 적용할 것.
+`lo < hi` 를 `__post_init__` 에서 검사함. cal 공간에는 `sign` 이 개입하지 않아 순서가
+뒤집히지 않으므로, 변환할 때마다 `min/max` 로 재정렬할 필요가 없어짐.
+
+`None` 은 "제한 없음" 이 아니라 "아직 모름" 임. `Motor.is_configured` 가 False 가
+되어 상위에서 제어 진입을 막음.
+
+**남은 작업 (4~5단계)**
+
+    config/calibration/*.json   limit_lo_deg / limit_hi_deg 제거
+    config/robot.yaml           모터별 limits 추가 (cal 공간)
+    config/robot.yaml           헤더 주석 수정 -- 현재 "실측값(... limits ...)은
+                                calibration/*.json 에 있다" 로 되어 있음
+
+### 함께 확인된 것 -- LeRobot 에서 가져오지 않을 것
+
+`DEGREES` 모드에는 한계 검사가 없음 (`motors_bus.py:874`). `range_min/max` 를 중점
+계산에만 쓰고 자르지 않음. `RANGE_M100_100` 에서 공짜로 얻던 보호가 도 단위를 쓰는
+순간 사라짐. **본 프로젝트는 도 단위를 씀.**
+
+NaN 검사는 전 계층에 없음.
+
+이 둘이 `safety/guards.py` 를 별도 관문으로 두는 이유임.
 
 ---
 
