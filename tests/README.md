@@ -10,7 +10,8 @@ tests/
 ├── test_commissioning.py   robstride/commissioning.py  33개
 ├── test_config.py          config/                     45개
 ├── test_calibration.py     calibration/                35개
-└── test_commission_cli.py  scripts/commission.py       30개
+├── test_commission_cli.py  scripts/commission.py       30개
+└── test_ankle.py           kinematics/ankle.py        149개
 ```
 
 ## 실행
@@ -20,9 +21,9 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-........................................................................ [ 87%]
-...........................................                              [100%]
-331 passed in 2.97s
+........................................................................ [ 90%]
+................................................                         [100%]
+480 passed in 3.21s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -164,6 +165,20 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestDangerous` | 6 | `--yes` 요구, 승인 전 무전송 |
 | `TestZero` | 4 | 메모 저장, 토크 차단 순서 |
 | `TestTargeting` | 5 | `--limb` 요구, 설정 오류가 버스보다 먼저 |
+
+### `test_ankle.py` — 149개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestGeometry` | 6 | 로드 길이, frozen, 거울상 부호 |
+| `TestSolveIk` | 13 | 중립 0, pitch/roll 방향, 규약 |
+| `TestSolveFk` | 111 | 왕복, 다중해, 범위 격자 |
+| `TestReachability` | 7 | 시험 범위, 로드 해 없음 |
+| `TestMirror` | 10 | 반대칭 |
+| `TestWrap` | 2 | `[-180, 180)` 접기 |
+
+`TestSolveFk` 가 큰 것은 시험 범위 격자 187개를 도는 매개변수 테스트 때문임 —
+**추정 `(0, 0)` 으로도 항상 원래 자세를 찾는지**를 범위 전체에서 확인함.
 
 ---
 
@@ -412,6 +427,29 @@ ConfigError: limbs.right_leg: 모르는 키 ['contorl_hz']
 YAML 은 모르는 키를 조용히 넘김. 고쳤는데 아무것도 안 바뀌고, 증상이 "느리다" 로
 나타나므로 원인을 설정에서 찾을 이유가 없어 오래 걸림.
 
+### `test_fk_is_not_unique` — 링키지의 성질
+
+```python
+a1, a2 = ankle.solve_ik(90, 90, enforce_envelope=False)
+other = ankle.solve_fk(a1, a2)                    # (2.41, -40.48)
+assert ankle.solve_ik(*other, enforce_envelope=False) == (a1, a2)
+```
+
+**같은 모터각 조합이 서로 다른 자세 둘에 대응함.** 버그가 아니라 링키지의 성질임.
+나중에 "FK 가 이상한 값을 낸다" 며 고치려는 것을 막음.
+
+바로 다음 테스트가 **시험 범위 안에서는 문제가 안 된다**는 것을 격자 187개로
+확인함.
+
+### `test_antisymmetry` — 거울상
+
+```
+거울상.solve_ik(pitch, -roll) == -원본.solve_ik(pitch, roll)
+```
+
+이게 성립해야 보행 궤적 한 벌로 양다리를 움직일 수 있음. 좌표만 뒤집고 부호를
+그대로 두면 근사로만 맞음.
+
 ### `test_all_keys_always_present`
 
 카운터가 0이어도 모든 키를 출력하는지. 필드가 나타났다 사라지면 PlotJuggler
@@ -423,7 +461,7 @@ YAML 은 모르는 키를 조용히 넘김. 고쳤는데 아무것도 안 바뀌
 
 | 대상 | 사유 |
 |---|---|
-| `kinematics/`, `robots/` | 아직 작성 전 (6단계) |
+| `robots/` | 아직 작성 전 (6단계) |
 | `telemetry/` | 아직 작성 전 (7단계) |
 | `control/` | 아직 작성 전 (8단계) |
 | `scripts/bringup.py` | 아직 작성 전 (9단계) |
