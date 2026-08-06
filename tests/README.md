@@ -2,7 +2,11 @@
 
 ```
 tests/
-└── test_safety.py   safety/ 순수 함수 42개 (294줄)
+├── test_safety.py         safety/               42개  (294줄)
+├── test_codec.py          robstride 사양·코덱    31개  (218줄)
+├── test_base.py           motors/base.py        42개  (382줄)
+├── test_canbus.py         motors/canbus.py      33개  (369줄)
+└── test_robstride_bus.py  robstride/bus.py      40개  (420줄)
 ```
 
 ## 실행
@@ -12,23 +16,43 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-..........................................            [100%]
-42 passed in 0.01s
+........................................................................ [ 38%]
+........................................................................ [ 76%]
+............................................                             [100%]
+188 passed in 0.12s
 ```
 
-**`python-can` 없이 실행됨.** 순수 계층만 다루기 때문임. 하드웨어도, CAN 인터페이스
-설정도 필요 없음.
+**하드웨어도 `python-can` 도 필요 없음.**
 
-특정 클래스만 실행:
+순수 계산 계층은 애초에 `python-can` 을 쓰지 않고, 전송 계층은 `import can` 이
+함수 안에 있어 가짜 모듈로 갈아끼울 수 있음.
+
+일부만 실행:
 
 ```bash
+PYTHONPATH=src python3 -m pytest tests/test_canbus.py -q
 PYTHONPATH=src python3 -m pytest tests -q -k TestApply
 PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 ```
 
 ---
 
+## 실물이 필요한 값을 쓰는 곳
+
+한계값은 실제 오른다리 값을 씀. **비대칭이라** 좌우 구분이 필요한 검사에 적합함.
+
+```
+무릎 m10   -20.65 ~ 74.79
+```
+
+버스 테스트는 다리 구성 그대로 씀 — RS02 4개(7~10)와 RS00 2개(11, 12)가 한 채널에
+물려 있고 **토크 범위가 다름**(17 vs 14 N·m).
+
+---
+
 ## 구성
+
+### `test_safety.py` — 42개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -42,8 +66,99 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestApply` | 10 | `guards.apply` — 세 관문 전체 |
 | `TestGuardCounters` | 4 | `guards.GuardCounters` |
 
-한계 상수는 실제 무릎(m10) 값 `-20.65 ~ 74.79` 를 사용함. **비대칭이라** 좌우 구분이
-필요한 검사에 적합함.
+### `test_codec.py` — 31개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestEncodingTables` | 6 | `tables.encoding_for`, 프로토콜 축 |
+| `TestCommandBytes` | 3 | 겹치는 명령 바이트 |
+| `TestQuantization` | 5 | `float_to_uint` / `uint_to_float` |
+| `TestPackCommand` | 9 | 명령 8바이트 배치 |
+| `TestDecodeState` | 4 | 상태 프레임 해석 |
+| `TestDecodeFault` | 4 | 고장 워드 해석 |
+
+### `test_base.py` — 42개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestGains` | 4 | `Gains`, `scaled` |
+| `TestMotor` | 9 | 한계 순서 검증, `is_configured` |
+| `TestMotorCalibration` | 12 | raw ↔ cal 변환 |
+| `TestMotorState` | 5 | 신선도 판정 |
+| `TestMotorFault` | 3 | 비트 필드 |
+| `TestResolveMotorList` | 5 | 대상 모터 확정 |
+| `TestMotorsBusContract` | 4 | ABC 강제, 컨텍스트 매니저 |
+
+### `test_canbus.py` — 33개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestCanFrame` | 3 | 표준 프레임 기본값, frozen |
+| `TestInterface` | 2 | socketcan 기본값 |
+| `TestLifecycle` | 8 | 중복 연결·해제, 미연결 조작 거부 |
+| `TestSend` | 6 | 순서 유지, 실패 후 계속 |
+| `TestDrain` | 8 | 조기 반환, 응답 누락, 상한, `flush_rx` |
+| `TestDrainAll` | 3 | 채널별 묶음, 전송이 수거보다 먼저 |
+| `TestCounters` | 3 | 0이어도 전 키 출력 |
+
+### `test_robstride_bus.py` — 40개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestConstruction` | 5 | 모델별 인코딩, 모델 오타 거부 |
+| `TestCommandFrames` | 2 | 프레임 배치, `0xFB` 의 두 뜻 |
+| `TestTorque` | 6 | 활성·정지·고장 클리어 |
+| `TestLifecycle` | 4 | 정지 후 종료 |
+| `TestSendMit` | 7 | 순서, 위치 왕복, 모델별 토크 스케일 |
+| `TestCollect` | 7 | 캐시 갱신, 무응답 보고, 깨진 프레임 |
+| `TestRefreshStates` | 4 | `PASSIVE` 전송, 게인 0, 큐 비우기 |
+| `TestFault` | 5 | 비트 해석, 무응답과 정상의 구분 |
+
+---
+
+## 하드웨어 없이 어떻게 확인하나
+
+### 순수 계층 — 그냥 부름
+
+`safety/`, `tables.py`, `codec/mit.py`, `base.py` 는 `python-can` 을 import하지
+않음. 인자를 넣고 반환값을 보면 됨.
+
+### 전송 계층 — 가짜 모듈로 갈아끼움
+
+`canbus.py` 가 `import can` 을 **함수 안에서** 하므로 `sys.modules` 에 가짜를 넣을
+수 있음.
+
+```python
+mod = types.ModuleType("can")
+mod.Message = FakeMessage
+mod.interface = types.SimpleNamespace(Bus=FakeCanBus)
+monkeypatch.setitem(sys.modules, "can", mod)
+```
+
+### 가짜 버스는 명령에 **응답함**
+
+```python
+def send(self, msg):
+    self.sent.append(msg)
+    reply = self.responses.get(msg.arbitration_id)
+    if reply is not None:
+        self.rx.append(reply)
+```
+
+미리 큐에 넣어 두는 방식은 `refresh_states` 와 `read_fault` 에서 재현이 깨짐 —
+둘 다 `flush_rx()` 를 먼저 부르므로 그 프레임이 지워짐. 실제 모터가 명령을 받은
+뒤에 답하는 것과 같은 순서로 맞춤.
+
+### 확인되지 않는 것
+
+가짜 버스는 타이밍을 재현하지 않음. **순서·개수·집계·프레임 내용**까지가 한계임.
+
+| | 확인 방법 |
+|---|---|
+| 전송 지연, CAN 중재 | 실물 |
+| 모터가 실제로 응답하는지 | 실물 |
+| 게인 값이 적절한지 | 실물 |
+| `zero_sta` 가 켜져 있는지 | 실물 |
 
 ---
 
@@ -51,7 +166,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 
 ### `TestNanIsDangerous` — 유한값 검사의 근거
 
-파이썬 `min`/`max`가 NaN을 통과시키는 것과, `limits.clamp`도 NaN을 못 잡는 것을
+파이썬 `min`/`max` 가 NaN을 통과시키는 것과, `limits.clamp` 도 NaN을 못 잡는 것을
 **직접 실행해 확인함.**
 
 ```python
@@ -68,7 +183,7 @@ def test_guards_catches_it(self):
     assert r.reject is guards.RejectReason.NOT_FINITE
 ```
 
-**"그래서 `guards`가 따로 검사해야 한다"는 근거가 코드로 남음.** 나중에 이 검사를
+**"그래서 `guards` 가 따로 검사해야 한다"는 근거가 코드로 남음.** 나중에 이 검사를
 지우려는 사람이 왜 있는지 알게 됨.
 
 ### `test_limit_applied_before_jump` — 클리핑 순서
@@ -92,7 +207,7 @@ def test_guards_catches_it(self):
 
 ### `test_output_may_be_outside_limits_while_recovering`
 
-현재가 이미 한계 밖(200)이면 **한 번에 복귀하지 않고** `max_delta`씩 돌아옴.
+현재가 이미 한계 밖(200)이면 **한 번에 복귀하지 않고** `max_delta` 씩 돌아옴.
 
 ```python
 r = guards.apply(0, 200, ...)
@@ -116,18 +231,99 @@ assert cur == pytest.approx(100.0)
 
 버리는 방식이면 도달 불가. **클리핑 = 속도 제한**임을 고정함.
 
-### `test_all_keys_always_present`
-
-`as_fields()`가 0이어도 모든 키를 출력하는지.
+### `test_nan_passes_the_clamp` — 코덱은 막지 못함
 
 ```python
-expected = {"clips", "rejects",
-            "clips_limit", "clips_jump",
-            "rejects_nan", "rejects_nostate"}
-assert set(guards.GuardCounters().as_fields()) == expected
+assert mit.float_to_uint(NAN, -12.57, 12.57, 16) == 65535
 ```
 
-필드가 나타났다 사라지면 PlotJuggler 레이아웃과 CSV 헤더가 깨짐.
+65535는 최대값, 즉 **720° 목표 명령**임. "코덱이 알아서 막겠지"라는 오해를 막음.
+
+### `test_protocol_axis_is_real` — 프로토콜별 속도 범위
+
+```python
+assert mit_rs02.vmax_rad_s == 33.0    # 매뉴얼 p.37~38
+assert pri_rs02.vmax_rad_s == 44.0    # 매뉴얼 p.20~21
+```
+
+이 축을 없애고 "모델별 사양" 하나로 뭉치면 private 값을 MIT에 가져다 쓰는 실수가 남.
+틀리면 속도 읽기가 44/33 = 1.33배 어긋남.
+
+### `test_hard_stop_moves_in_raw_but_not_in_cal` — 한계값을 cal 에 둔 근거
+
+영점을 3° 다른 자세에서 다시 잡으면 raw 는 달라지고 cal 은 그대로임.
+
+```python
+before = MotorCalibration(motor_id=10, offset_deg=12.0)
+after  = MotorCalibration(motor_id=10, offset_deg=15.0)
+
+assert before.cal_to_raw(74.79) == pytest.approx(62.79)
+assert after.cal_to_raw(74.79)  == pytest.approx(59.79)
+```
+
+하드스톱은 쇳덩어리라 움직이지 않는데 raw 숫자만 바뀜 (이슈 #2).
+
+### `test_mirrored_legs_share_one_cal_number`
+
+```python
+right = MotorCalibration(motor_id=10, sign=1.0)
+left  = MotorCalibration(motor_id=4,  sign=-1.0)
+
+assert right.raw_to_cal(45.0)  == pytest.approx(45.0)
+assert left.raw_to_cal(-45.0)  == pytest.approx(45.0)
+```
+
+보행 궤적이 "무릎 45°" 라고 하면 양다리가 같은 동작을 함. **cal 공간이 존재하는
+이유임.**
+
+### `test_identity_when_unmeasured` — 지금 두 공간이 같은 이유
+
+`sign=1, offset=0` 이라 `cal == raw` 임. 어느 쪽으로 해석해도 동작이 같아서 이슈 #2
+가 드러나지 않음. 실측값을 넣는 순간 갈라짐.
+
+### `test_disconnects_even_on_exception`
+
+제어 중 예외가 나도 토크가 끊겨야 함 (이슈 #6). 없으면 모터가 마지막 명령을 계속
+유지함 — 사람이 전원을 뽑을 때까지 다리가 힘을 주고 있음.
+
+### `test_send_all_precedes_drain_all` — 이슈 #10의 순서
+
+모든 가짜 버스가 공유하는 이벤트 순서로 확인함.
+
+```python
+kinds = [kind for kind, _ in FakeCanBus.events]
+assert kinds == ["send"] * 6              # 수거가 전송 사이에 끼지 않음
+```
+
+버스별 `recv` 호출 수로는 확인되지 않음 — `drain` 은 항상 최소 한 번 `recv` 를 부름.
+
+### `test_passive_command_carries_no_effort`
+
+```python
+leg.refresh_states([10])
+assert ((data[3] & 0x0F) << 8) | data[4] == 0        # Kp
+assert (data[5] << 4) | (data[6] >> 4) == 0          # Kd
+```
+
+게인이 0이 아니면 **상태를 읽는 것만으로 다리가 움직임.**
+
+### `test_model_decides_torque_scaling`
+
+같은 토크 값이 모델에 따라 다른 바이트가 됨. RS00은 범위가 좁아(14 N·m) RS02(17
+N·m)보다 큰 수가 나감.
+
+### `test_uses_query_variant` — 고장 조회
+
+```python
+assert raw.sent[0].data[6] == T.F_CMD_FAULT_QUERY
+```
+
+`F_CMD` 가 `0xFF` 면 **클리어**임. 조회하려다 지우면 원인을 잃음.
+
+### `test_all_keys_always_present`
+
+카운터가 0이어도 모든 키를 출력하는지. 필드가 나타났다 사라지면 PlotJuggler
+레이아웃과 CSV 헤더가 깨짐. `safety` 와 `can` 양쪽에 있음.
 
 ---
 
@@ -135,9 +331,11 @@ assert set(guards.GuardCounters().as_fields()) == expected
 
 | 대상 | 사유 |
 |---|---|
-| `motors/` | 아직 작성 전 (2단계) |
-| `kinematics/` | 아직 작성 전 (6단계) |
-| 그 외 계층 | 아직 작성 전 |
+| `robstride/commissioning.py` | 아직 작성 전 (4단계) |
+| `config/`, `calibration/` | 아직 작성 전 (5단계) |
+| `kinematics/`, `robots/` | 아직 작성 전 (6단계) |
+| `telemetry/` | 아직 작성 전 (7단계) |
+| `control/`, `scripts/` | 아직 작성 전 (8~9단계) |
 
 작성 순서는 [docs/build_from_scratch.md](../docs/build_from_scratch.md) 참조.
 각 단계마다 해당 계층의 테스트를 여기에 추가함.
