@@ -254,31 +254,43 @@ LeRobot 도 `Robot` ABC 에 `is_calibrated` 와 `calibrate()` 를 둠
 
 ---
 
-## 🟡 #4 — 텔레메트리를 제어 루프에 연결하는 것이 남음
+## 🟢 #4 — 관측이 제어 경로와 같이 감
 
-**부분 해결** — `telemetry/` 가 만들어졌고 `Robot` 에서 스냅샷을 뽑을 수 있음.
-제어 루프에 거는 것은 8단계에 남음.
+**해결됨** — `control/loop.py` 가 매 주기 기록하고, `scripts/bringup.py` 의 움직이는
+항목이 전부 그 루프를 탐.
 
 ### 무엇이었나
 
 관측 경로가 제어 경로와 따로 놀면, 사람이 손으로 움직여 볼 때는 그래프가 안 나오고
 자동 제어 때만 나옴. **게인을 튜닝하려면 손으로 움직이면서 봐야 함.**
 
+메뉴가 로봇을 직접 부르면 그 경로에서만 다음이 빠짐.
+
+    텔레메트리 (UDP·CSV)
+    주기 측정 (loop_dt, overruns, kept_up)
+    정지 순서 (hold 후 토크 차단)
+
+그러면 그래프가 안 나오는데 **텔레메트리가 고장난 줄 알게 되고**, 같은 일을 하는
+코드가 두 벌이 되어 한쪽만 고쳐짐.
+
 ### 지금 구조
 
-    snapshot.build(robot, t=...)   로봇에서 읽기만 함. 통신하지 않음
-    Telemetry.record()             UDP 와 CSV 로 한 번에 내보냄
+    menu -> motion -> ControlLoop -> Leg -> bus
 
-`build()` 가 `Robot` 계약만 씀 (`get_observation`, `last_sent`, `counters`).
-따라서 **어느 경로에서 부르든 같은 값이 나옴** -- 제어 루프든, 대화형 메뉴든,
-커미셔닝이든.
+메뉴 항목은 `Motion` 만 정하고 `_run()` 에 넘김. `_run()` 이 모드를 CONTROL 로
+바꾸고 루프를 돌린 뒤 관찰 모드로 되돌림.
 
-### 남은 것
+`snapshot.build()` 는 `Robot` 계약만 쓰므로 어느 경로에서 부르든 같은 값이 나옴.
 
-`control/loop.py` 가 매 주기 `record()` 를 부르게 하는 것 (8단계).
-`scripts/bringup.py` 의 메뉴가 제어 루프를 타게 하는 것 (9단계).
+### 고정한 것
 
-메뉴가 버스를 직접 호출하면 그 경로에서만 텔레메트리가 빠짐. 메뉴도 루프를 거쳐야 함.
+`tests/test_bringup.py` 의 `TestGoesThroughTheLoop` 가 `ControlLoop.run` 을 감시함.
+움직이는 항목이 루프를 타지 않으면 실패함.
+
+### 예외
+
+되돌리기 어려운 조작(영점, CAN id, 프로토콜)은 `scripts/commission.py` 에 있고
+루프를 타지 않음. **반복하지 않는 조작이라 주기가 없음.**
 
 ---
 

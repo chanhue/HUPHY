@@ -1,0 +1,368 @@
+"""브링업 메뉴 테스트 — 하드웨어 없이 실행됨.
+
+    PYTHONPATH=src python3 -m pytest tests -q
+
+가짜 모터가 붙은 가짜 CAN 버스에 대고 메뉴를 실제로 돌림. 입력은 미리 넣음.
+
+여기서 확인하는 핵심은 **움직이는 항목이 전부 제어 루프를 지나는지**임 (이슈 #4).
+메뉴가 로봇을 직접 부르면 그 경로에서만 텔레메트리와 주기 측정이 빠짐.
+"""
+
+import json
+import math
+import sys
+import types
+from collections import deque
+
+import pytest
+
+from huphy.control import ControlLoop, Mode
+from huphy.motors.robstride import tables as T
+from huphy.motors.robstride.codec import mit
+from huphy.scripts import bringup
+
+MODELS = {7: T.Model.RS02, 8: T.Model.RS02, 9: T.Model.RS02,
+          10: T.Model.RS02, 11: T.Model.RS00, 12: T.Model.RS00}
+
+ROBOT_YAML = """
+name: t
+limbs:
+  right_leg:
+    kind: leg
+    side: right
+    channel: can1
+    control_hz: 200.0
+    calibration: calibration/right_leg.json
+    motors:
+      hipz:     {id: 7,  model: RS02, limits_deg: [-117.07, -21.07], kp: 30.0, kd: 1.0}
+      hipx:     {id: 8,  model: RS02, limits_deg: [-5.51, 79.64],    kp: 30.0, kd: 1.0}
+      hipy:     {id: 9,  model: RS02, limits_deg: [-41.90, 31.09],   kp: 30.0, kd: 1.0}
+      knee:     {id: 10, model: RS02, limits_deg: [-20.65, 74.79],   kp: 30.0, kd: 1.0}
+      ankle_a1: {id: 11, model: RS00, limits_deg: [-79.77, 43.16],   kp: 30.0, kd: 1.0}
+      ankle_a2: {id: 12, model: RS00, limits_deg: [-12.50, 126.66],  kp: 30.0, kd: 1.0}
+  left_leg:
+    kind: leg
+    side: left
+    channel: can0
+    motors:
+      hipz:     {id: 1, model: RS02}
+      hipx:     {id: 2, model: RS02}
+      hipy:     {id: 3, model: RS02}
+      knee:     {id: 4, model: RS02}
+      ankle_a1: {id: 5, model: RS00}
+      ankle_a2: {id: 6, model: RS00}
+"""
+
+CALIBRATION = {
+    "schema_version": 1,
+    "limb": "right_leg",
+    "note": "",
+    "motors": {
+        name: {"sign": 1.0, "offset_deg": 0.0, "zero_reference": "편 상태"}
+        for name in ("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2")
+    },
+}
+
+
+# ===========================================================================
+# 가짜 모터
+# ===========================================================================
+class FakeMessage:
+    def __init__(self, arbitration_id, data, is_extended_id=False):
+        self.arbitration_id = arbitration_id
+        self.data = data
+        self.is_extended_id = is_extended_id
+
+
+class FakeBus:
+    position = {}
+    instances = []
+
+    def __init__(self, **kwargs):
+        self.rx = deque()
+        self.sent = []
+        FakeBus.instances.append(self)
+
+    def send(self, msg):
+        self.sent.append(msg)
+        mid = msg.arbitration_id
+        d = msg.data
+        enc = T.encoding_for(MODELS[mid])
+        if d[0] != 0xFF and ((d[3] & 0x0F) << 8) | d[4] > 0:
+            target = math.degrees(mit.uint_to_float(
+                (d[0] << 8) | d[1], -enc.pmax_rad, enc.pmax_rad, 16))
+            FakeBus.position[mid] += (target - FakeBus.position[mid]) * 0.4
+        pos = FakeBus.position.get(mid, 0.0)
+        q = mit.float_to_uint(math.radians(pos), -enc.pmax_rad, enc.pmax_rad, 16)
+        v = mit.float_to_uint(0.0, -enc.vmax_rad_s, enc.vmax_rad_s, 12)
+        tau = mit.float_to_uint(0.3, -enc.tmax_nm, enc.tmax_nm, 12)
+        self.rx.append(FakeMessage(mid, bytes([
+            mid, (q >> 8) & 0xFF, q & 0xFF, (v >> 4) & 0xFF,
+            ((v & 0x0F) << 4) | ((tau >> 8) & 0x0F), tau & 0xFF, 0x01, 0x2C,
+        ])))
+
+    def recv(self, timeout=None):
+        return self.rx.popleft() if self.rx else None
+
+    def shutdown(self):
+        pass
+
+
+@pytest.fixture
+def fake_can(monkeypatch):
+    FakeBus.instances = []
+    FakeBus.position = {i: 0.0 for i in MODELS}
+    FakeBus.position[7] = -60.0        # hipz 는 한계 안
+    mod = types.ModuleType("can")
+    mod.Message = FakeMessage
+    mod.interface = types.SimpleNamespace(Bus=FakeBus)
+    monkeypatch.setitem(sys.modules, "can", mod)
+    return mod
+
+
+@pytest.fixture
+def cfg(tmp_path):
+    (tmp_path / "config" / "calibration").mkdir(parents=True)
+    robot = tmp_path / "config" / "robot.yaml"
+    robot.write_text(ROBOT_YAML, encoding="utf-8")
+    (tmp_path / "config" / "calibration" / "right_leg.json").write_text(
+        json.dumps(CALIBRATION, ensure_ascii=False), encoding="utf-8"
+    )
+    return robot
+
+
+@pytest.fixture
+def menu(fake_can, cfg, monkeypatch, capsys):
+    """메뉴를 미리 넣은 입력으로 돌림. (종료코드, 출력) 을 돌려줌."""
+    def _run(inputs, *argv):
+        it = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        code = bringup.main(["--config", str(cfg), "--limb", "right_leg", *argv])
+        return code, capsys.readouterr().out
+    return _run
+
+
+# ===========================================================================
+# 조립
+# ===========================================================================
+class TestBuildLeg:
+    def test_gain_scale_lowers_every_motor(self, fake_can, cfg):
+        from huphy.config import load_robot
+
+        robot = load_robot(cfg)
+        leg = bringup.build_leg(robot, robot.limb("right_leg"), gain_scale=0.1)
+        assert leg.config.motors["knee"].gains.kp == pytest.approx(3.0)
+        assert leg.config.motors["ankle_a1"].gains.kd == pytest.approx(0.1)
+
+    def test_left_leg_gets_mirrored_kinematics(self, fake_can, cfg):
+        """같은 관절 명령에 양다리가 같은 물리 동작을 하려면 필요함."""
+        from huphy.config import load_robot
+
+        robot = load_robot(cfg)
+        right = bringup.build_leg(robot, robot.limb("right_leg"))
+        left = bringup.build_leg(robot, robot.limb("left_leg"))
+
+        r = right.kinematics.solve_ik(5.0, 2.0)
+        l = left.kinematics.solve_ik(5.0, -2.0)
+        assert l[0] == pytest.approx(-r[0])
+        assert l[1] == pytest.approx(-r[1])
+
+    def test_uses_the_robot_safety_config(self, fake_can, cfg):
+        from huphy.config import load_robot
+
+        robot = load_robot(cfg)
+        leg = bringup.build_leg(robot, robot.limb("right_leg"))
+        assert leg.safety is robot.safety
+
+
+# ===========================================================================
+# 메뉴가 루프를 탐 — 이슈 #4
+# ===========================================================================
+class TestGoesThroughTheLoop:
+    def test_moving_items_use_the_loop(self, fake_can, cfg, monkeypatch, capsys):
+        """메뉴가 로봇을 직접 부르지 않음.
+
+        직접 부르면 그 경로에서만 텔레메트리·주기 측정·정지 순서가 빠짐 (이슈 #4).
+        """
+        runs = []
+        original = ControlLoop.run
+
+        def spy(self, motion=None, **kwargs):
+            runs.append((self.mode, kwargs))
+            return original(self, motion, **kwargs)
+
+        monkeypatch.setattr(ControlLoop, "run", spy)
+        it = iter(["3", "0.05", "q"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        bringup.main(["--config", str(cfg), "--limb", "right_leg"])
+
+        assert runs, "움직이는 항목이 루프를 타지 않았음"
+        assert all(mode is Mode.CONTROL for mode, _ in runs)
+
+    def test_returns_to_observe_after_moving(self, fake_can, cfg, monkeypatch, capsys):
+        """움직이고 나면 토크가 꺼진 상태로 돌아와야 함."""
+        seen = []
+        original = ControlLoop.run
+
+        def spy(self, motion=None, **kwargs):
+            result = original(self, motion, **kwargs)
+            seen.append(self.mode)
+            return result
+
+        monkeypatch.setattr(ControlLoop, "run", spy)
+        it = iter(["3", "0.05", "q"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        bringup.main(["--config", str(cfg), "--limb", "right_leg"])
+        assert seen
+
+    def test_stats_are_per_run(self, menu):
+        """실행마다 통계를 새로 냄.
+
+        누적하면 주기 수는 쌓이는데 시간은 이번 것이라 평균 주파수가 목표보다
+        높게 나옴.
+        """
+        _, out = menu(["3", "0.05", "3", "0.05", "q"])
+        rates = [
+            float(line.split("평균 ")[1].split("Hz")[0])
+            for line in out.splitlines() if "평균 " in line
+        ]
+        assert len(rates) >= 2
+        assert all(rate <= 200.0 * 1.05 for rate in rates)
+
+
+# ===========================================================================
+# 화면
+# ===========================================================================
+class TestShowState:
+    def test_shows_every_motor(self, menu):
+        _, out = menu(["1", "q"])
+        for name in ("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"):
+            assert name in out
+
+    def test_shows_both_spaces(self, menu):
+        _, out = menu(["1", "q"])
+        assert "raw" in out and "cal" in out
+
+    def test_shows_link_status(self, menu):
+        """명령이 씹혔는지 사람이 바로 보게 함."""
+        _, out = menu(["1", "q"])
+        assert "ack" in out and "age" in out
+
+    def test_shows_ankle_pose(self, menu):
+        """모터 각도가 아니라 발이 몇 도 기울었는지를 봄."""
+        _, out = menu(["1", "q"])
+        assert "발목" in out and "pitch" in out
+
+    def test_warns_when_outside_limits(self, fake_can, cfg, monkeypatch, capsys):
+        """토크를 넣으면 가드가 한계 안으로 끌어당김 -- 그 방향으로 움직임.
+
+        사람이 알고 있어야 함.
+        """
+        FakeBus.position[10] = 200.0        # 무릎 한계는 74.79
+        it = iter(["1", "q"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        bringup.main(["--config", str(cfg), "--limb", "right_leg"])
+        out = capsys.readouterr().out
+        assert "한계 밖에 있는 관절" in out
+        assert "knee" in out
+
+    def test_quiet_when_inside_limits(self, menu):
+        _, out = menu(["1", "q"])
+        assert "한계 밖에 있는 관절" not in out
+
+    def test_counters(self, menu):
+        _, out = menu(["2", "q"])
+        assert "clips_limit" in out
+        assert "tx_errors" in out
+        assert "마지막 클리핑 이후" in out
+
+
+# ===========================================================================
+# 토크가 필요한 항목
+# ===========================================================================
+class TestTorqueGate:
+    def test_refuses_when_uncalibrated(self, fake_can, tmp_path, monkeypatch, capsys):
+        """미실측 상태로 토크를 넣는 것이 가장 위험함."""
+        (tmp_path / "config").mkdir()
+        robot = tmp_path / "config" / "robot.yaml"
+        robot.write_text(ROBOT_YAML, encoding="utf-8")   # 캘리브레이션 파일 없음
+
+        it = iter(["3", "q"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        bringup.main(["--config", str(robot), "--limb", "right_leg"])
+        out = capsys.readouterr().out
+        assert "--allow-uncalibrated" in out
+
+    def test_allows_with_the_flag(self, fake_can, tmp_path, monkeypatch, capsys):
+        """실측을 하려면 움직여야 하므로 필요함."""
+        (tmp_path / "config").mkdir()
+        robot = tmp_path / "config" / "robot.yaml"
+        robot.write_text(ROBOT_YAML, encoding="utf-8")
+
+        it = iter(["3", "0.05", "q"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        bringup.main(["--config", str(robot), "--limb", "right_leg",
+                      "--allow-uncalibrated"])
+        assert "평균" in capsys.readouterr().out
+
+    def test_read_only_items_never_gated(self, fake_can, tmp_path, monkeypatch, capsys):
+        """상태 보기는 토크가 필요 없음."""
+        (tmp_path / "config").mkdir()
+        robot = tmp_path / "config" / "robot.yaml"
+        robot.write_text(ROBOT_YAML, encoding="utf-8")
+
+        it = iter(["1", "q"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        bringup.main(["--config", str(robot), "--limb", "right_leg"])
+        assert "--allow-uncalibrated" not in capsys.readouterr().out
+
+
+# ===========================================================================
+# 동작 항목
+# ===========================================================================
+class TestMotionItems:
+    def test_step_response_holds_the_others(self, menu):
+        """여럿을 같이 흔들면 어느 관절이 원인인지 섞임."""
+        _, out = menu(["5", "knee", "3", "q"])
+        assert "kp 부족" in out          # 무엇을 볼지 안내함
+
+    def test_sine(self, menu):
+        _, out = menu(["6", "knee", "2", "1", "0.1", "q"])
+        assert "평균" in out
+
+    def test_move_joint(self, menu):
+        _, out = menu(["4", "knee", "3", "q"])
+        assert "->" in out
+
+    def test_unknown_joint_is_rejected(self, menu):
+        _, out = menu(["5", "elbow", "q"])
+        assert "없음" in out
+
+    def test_bad_number_is_rejected(self, menu):
+        _, out = menu(["3", "빠르게", "q"])
+        assert "숫자가 아님" in out
+
+
+# ===========================================================================
+# 메뉴 자체
+# ===========================================================================
+class TestMenu:
+    def test_marks_items_that_need_torque(self, menu):
+        _, out = menu(["q"])
+        assert "[토크]" in out
+
+    def test_unknown_choice(self, menu):
+        _, out = menu(["99", "q"])
+        assert "없는 항목" in out
+
+    def test_shows_calibration_state(self, menu):
+        _, out = menu(["q"])
+        assert "캘리브레이션" in out
+
+    def test_ends_with_torque_off(self, menu):
+        _, out = menu(["q"])
+        assert "토크가 끊겼음" in out
+
+    def test_missing_config(self, fake_can, tmp_path):
+        with pytest.raises(SystemExit, match="설정 파일이 없음"):
+            bringup.main(["--config", str(tmp_path / "없음.yaml")])

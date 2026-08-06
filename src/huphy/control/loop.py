@@ -262,6 +262,9 @@ class ControlLoop:
         붙잡고 토크를 끊음.
         """
         self._stop = False
+        # 이번 실행의 통계만 담음. 누적하면 주기 수는 쌓이는데 시간은 이번 것이라
+        # 평균 주파수가 목표보다 높게 나옴.
+        self.stats = LoopStats(target_hz=self.hz)
         self._enter()
 
         t0 = time.perf_counter()

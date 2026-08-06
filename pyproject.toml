@@ -18,6 +18,7 @@ dev = ["pytest>=7.0"]
 
 [project.scripts]
 huphy-commission = "huphy.scripts.commission:main"
+huphy-bringup = "huphy.scripts.bringup:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

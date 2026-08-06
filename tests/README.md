@@ -14,7 +14,8 @@ tests/
 ├── test_ankle.py           kinematics/ankle.py        149개
 ├── test_leg.py             robots/leg.py               42개
 ├── test_telemetry.py       telemetry/                  43개
-└── test_control.py         control/                    43개
+├── test_control.py         control/                    43개
+└── test_bringup.py         scripts/bringup.py          26개
 ```
 
 ## 실행
@@ -24,9 +25,9 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-........................................................................ [ 93%]
-........................................                                 [100%]
-616 passed in 3.77s
+........................................................................ [ 89%]
+.......................................................................  [100%]
+642 passed in 11.5s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -220,6 +221,20 @@ UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬
 | `TestTiming` | 10 | 주기 측정, 꾸준한 느림, 정밀 대기 |
 | `TestTelemetryHookup` | 5 | 기록 실패가 루프를 안 멈춤 |
 | `TestStep` | 2 | 한 걸음씩 |
+
+### `test_bringup.py` — 26개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestBuildLeg` | 3 | 게인 축소, 왼다리 거울상 기구학 |
+| `TestGoesThroughTheLoop` | 3 | **움직이는 항목이 루프를 탐** (이슈 #4) |
+| `TestShowState` | 7 | raw/cal, 링크 상태, 한계 밖 경고 |
+| `TestTorqueGate` | 3 | 미실측이면 토크 거부 |
+| `TestMotionItems` | 5 | 계단·사인파·이동, 잘못된 입력 |
+| `TestMenu` | 5 | 항목 표시, 종료 시 토크 차단 |
+
+메뉴를 실제로 돌림 — `builtins.input` 을 미리 넣은 값으로 갈아끼움. 루프가 실제로
+도는 항목이 있어 **이 파일이 가장 오래 걸림**(약 7초).
 
 ---
 
@@ -566,6 +581,18 @@ MIT 프로토콜에는 읽기 전용 명령이 없음. 아무것도 보내지 �
 
 `overruns` 는 튀는 주기를 세지만 **꾸준히 느린 것은 못 잡음** — 매 주기 24%씩
 넘으면 한 번도 밀림으로 세지 않으면서 주파수만 떨어짐.
+
+### `test_moving_items_use_the_loop` — 이슈 #4
+
+`ControlLoop.run` 을 감시해 **움직이는 항목이 전부 루프를 지나는지** 봄.
+
+메뉴가 로봇을 직접 부르면 그 경로에서만 텔레메트리·주기 측정·정지 순서가 빠짐.
+그러면 그래프가 안 나오는데 텔레메트리가 고장난 줄 알게 됨.
+
+### `test_warns_when_outside_limits`
+
+관절이 한계 밖에 있으면 **토크를 넣는 순간 가드가 한계 안으로 끌어당김.** 그
+방향으로 움직이므로 사람이 알고 있어야 함.
 
 ### `test_all_keys_always_present`
 
