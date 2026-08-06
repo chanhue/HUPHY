@@ -1,355 +1,389 @@
 # 호출 관계와 흐름도
 
-`src/huphy/`의 구조를 그림으로. 소스에서 추출한 실제 import 관계와 호출 순서다.
-
-> GitHub에서는 바로 렌더링된다. VSCode에서 보려면 Markdown Preview Mermaid Support
-> 확장이 필요하다.
+누가 누구를 부르는지. 계층을 나눈 **이유**는 [architecture.md](architecture.md),
+사용법은 [루트 README](../README.md).
 
 ---
 
-## 1. 모듈 의존 그래프 (정적)
-
-화살표 = **"A가 B를 import한다"**. 의존은 위에서 아래로만 흐른다.
+## 1. 모듈 의존 그래프
 
 ```mermaid
-flowchart TD
-    subgraph L5["진입점"]
-        BRINGUP["scripts/bringup.py"]
+graph TD
+    subgraph 진입점
+        COMMISSION[scripts/commission.py]
+        BRINGUP[scripts/bringup.py]
     end
 
-    subgraph L4["로봇 · 제어"]
-        FACTORY["robots/factory.py"]
-        LEG["robots/leg.py<br/>SingleLeg"]
-        RBASE["robots/base.py<br/>Robot ABC"]
-        LOOP["control/loop.py<br/>LegControlLoop"]
-        TRAJ["control/trajectory.py<br/>SetpointRamp"]
+    subgraph 제어
+        LOOP[control/loop.py]
+        MOTIONS[control/motions.py]
     end
 
-    subgraph L3["설정 · 실측값"]
-        CFG["config/robot.py<br/>loader.py"]
-        CAL["calibration/store.py"]
+    subgraph 경계
+        LEG[robots/leg.py]
+        RBASE[robots/base.py]
     end
 
-    subgraph L2["순수 계산"]
-        SAFE["safety/<br/>wrap · limits · guards"]
-        KIN["kinematics/ankle.py"]
+    subgraph 순수계산
+        ANKLE[kinematics/ankle.py]
+        GUARDS[safety/guards.py]
+        LIMITS[safety/limits.py]
     end
 
-    subgraph L1["모터 · 통신"]
-        BUS["motors/robstride/bus.py<br/>RobStrideBus"]
-        COMM["motors/robstride/<br/>commissioning.py"]
-        CODEC["motors/robstride/<br/>codec/mit.py"]
-        TABLES["motors/robstride/<br/>tables.py"]
-        CAN["motors/canbus.py<br/>CanBus"]
-        MBASE["motors/base.py"]
+    subgraph 값
+        CFG[config/loader.py]
+        SCHEMA[config/schema.py]
+        CAL[calibration/store.py]
     end
 
-    subgraph L0["관찰"]
-        TELE["telemetry/<br/>udp · csv_log"]
+    subgraph 모터
+        MBASE[motors/base.py]
+        CANBUS[motors/canbus.py]
+        RBUS[robstride/bus.py]
+        CODEC[robstride/codec/mit.py]
+        TABLES[robstride/tables.py]
+        COMM[robstride/commissioning.py]
     end
 
-    BRINGUP --> FACTORY & LEG & TRAJ & SAFE & COMM & CAL & TABLES
-    FACTORY --> CFG & LEG & CAN & BUS & TELE
-    LOOP --> LEG
-    LEG --> RBASE & CFG & KIN & SAFE & CAL & BUS & MBASE
-    CFG --> SAFE & TABLES
+    subgraph 관측
+        TELE[telemetry/]
+    end
+
+    BRINGUP --> LOOP
+    BRINGUP --> MOTIONS
+    BRINGUP --> LEG
+    BRINGUP --> TELE
+    BRINGUP --> CFG
+    COMMISSION --> COMM
+    COMMISSION --> CFG
+    COMMISSION --> CAL
+
+    LOOP --> RBASE
+    LOOP -.기록.-> TELE
+    MOTIONS -.순수.-> MOTIONS
+
+    LEG --> RBASE
+    LEG --> ANKLE
+    LEG --> GUARDS
+    LEG --> CAL
+    LEG --> SCHEMA
+    LEG --> RBUS
+
+    GUARDS --> LIMITS
+    CFG --> SCHEMA
+    SCHEMA --> MBASE
     CAL --> MBASE
-    BUS --> MBASE & CAN & CODEC & TABLES
-    COMM --> CAN & CODEC & TABLES
+
+    RBUS --> MBASE
+    RBUS --> CANBUS
+    RBUS --> CODEC
+    RBUS --> TABLES
+    COMM --> RBUS
     CODEC --> TABLES
 
-    classDef pure fill:#e8f5e9,stroke:#43a047,color:#111
-    classDef danger fill:#fff3e0,stroke:#fb8c00,color:#111
-    classDef orphan fill:#eee,stroke:#999,stroke-dasharray:4,color:#111
-    class SAFE,KIN,TRAJ,TABLES,CODEC,MBASE pure
-    class COMM danger
-    class LOOP orphan
+    TELE -.읽기만.-> RBASE
+
+    style CANBUS fill:#ffe0e0
+    style TELE fill:#e0f0ff
 ```
 
-| 표시 | 의미 |
-|---|---|
-| 🟩 초록 | **순수 계층** — `python-can` 없이 import·테스트된다 |
-| 🟧 주황 | **커미셔닝** — 되돌리기 어려운 영구 조작. `scripts/`만 부른다 |
-| ⬜ 점선 | **미연결** — 아직 아무도 import하지 않는다 |
+**`canbus.py` 만 `python-can` 을 씀** (붉은색). 그것도 함수 안에서 import 함.
 
-**규칙 확인**: `safety/`·`kinematics/`가 `motors/`를 가리키는 화살표가 없고,
-`telemetry/`에서 나가는 화살표가 하나도 없다. `motors/`에서 위로 올라가는 화살표도 없다.
+**`telemetry/` 는 아무도 부르지 않음** (파란색). `Robot` 계약을 읽기만 함.
 
 ---
 
-## 2. 조립 순서 — `build()`가 하는 일
+## 2. 조립 — `bringup.build_leg()`
+
+```mermaid
+graph LR
+    Y[config/robot.yaml] --> L[load_robot]
+    L --> RC[RobotConfig]
+    RC --> LC[LimbConfig]
+
+    LC --> G{side}
+    G -->|left| MIR[AnkleGeometry.mirrored]
+    G -->|right| ORI[AnkleGeometry]
+    MIR --> AK[AnkleKinematics]
+    ORI --> AK
+
+    LC --> CB[CanBus]
+    CB --> RB[RobStrideBus]
+    LC -->|motors_by_id| RB
+
+    J[calibration/*.json] --> CL[calibration.load]
+    CL --> AT[attach]
+    LC -->|motors| AT
+
+    RB --> LEG[Leg]
+    AK --> LEG
+    AT --> LEG
+    RC -->|safety| LEG
+```
+
+`motors_by_id()` 가 경계임 — **여기서 관절 이름을 버리고 모터 id 만 넘김.**
+`RobStrideBus` 는 "무릎" 이 무엇인지 모름.
+
+`attach()` 도 같음 — 관절 이름 키의 캘리브레이션을 모터 id 키로 다시 잡음.
+양쪽 관절 이름이 정확히 같아야 하고, 하나만 빠져도 에러임.
+
+---
+
+## 3. 제어 한 사이클 — `ControlLoop.step()`
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant S as scripts/bringup
-    participant F as robots/factory
-    participant LD as config/loader
-    participant CS as calibration/store
-    participant C as motors/CanBus
+    participant L as ControlLoop
+    participant M as Motion
+    participant R as Leg
     participant B as RobStrideBus
-    participant L as SingleLeg
-
-    S->>F: build("right", allow_uncalibrated)
-    F->>LD: load_robot_config()
-    LD-->>F: RobotConfig (legs, telemetry, safety)
-    F->>C: CanBus(interface, channel)
-    F->>B: RobStrideBus(can_bus, models)
-    Note over B: 모터별 EncodingRange 결정<br/>encoding_for(model, MIT)
-    F->>L: SingleLeg(leg_cfg, bus)
-    L->>CS: load(calibration_path)
-    CS-->>L: dict[int, MotorCalibration]
-    L->>CS: is_complete() ?
-    alt 미완 && not allow_uncalibrated
-        L-->>S: RuntimeError (모터별 미완 사유)
-    end
-    F->>F: build_telemetry() → TelemetrySink
-    F-->>S: (cfg, leg, sink)
-    S->>L: connect()
-    L->>C: connect() → SocketCAN 열기
-```
-
----
-
-## 3. 제어 한 사이클 — `LegControlLoop.step()`
-
-```mermaid
-flowchart TD
-    START([사이클 시작]) --> DT["loop_dt 측정<br/>LoopTiming.tick"]
-    DT --> RESET["rejects.reset()"]
-    RESET --> MODE{mode?}
-
-    MODE -->|state_only| SO1["clear_estop()<br/>(설정에 따라)"]
-    SO1 --> SO2["bus.sync_read_states()"]
-    SO2 --> SO3["disable_torque()<br/>최초 1회만"]
-    SO3 --> EMIT
-
-    MODE -->|control| C1{"stale 상태<br/>있나?"}
-    C1 -->|있음| C2["sync_read_states(stale)"]
-    C1 -->|없음| C3
-    C2 --> C3["check_state_bounds()"]
-    C3 --> C4{한계 초과?}
-    C4 -->|초과| ESTOP["trip_estop()<br/>disable_torque()"]
-    ESTOP --> EMIT
-    C4 -->|정상| C5{"목표<br/>초기화됨?"}
-    C5 -->|아니오| C6["latch_target_from_state()<br/>현재 자세를 목표로"]
-    C5 -->|예| C7
-    C6 --> C7{"update_damping()<br/>한계 근접?"}
-    C7 -->|근접| DAMP["send_damping()<br/>kp=0, kd만"]
-    C7 -->|여유| ACT["send_action()"]
-    DAMP --> EMIT
-    ACT --> EMIT
-
-    EMIT["_emit()<br/>telemetry_snapshot + mode/loop_dt/cycle"]
-    EMIT --> SINK["on_snapshot(snap)"]
-    SINK --> SLEEP["다음 tick까지 sleep<br/>밀렸으면 overruns++"]
-    SLEEP --> START
-
-    classDef danger fill:#ffebee,stroke:#e53935,color:#111
-    classDef warn fill:#fff3e0,stroke:#fb8c00,color:#111
-    class ESTOP danger
-    class DAMP warn
-```
-
-**`update_damping()`이 하나라도 걸리면 다리 전체가 감쇠로 간다.** 범인 모터는
-`_damping_culprit`에 기록되어 스냅샷으로 나간다.
-
----
-
-## 4. `send_action()` 내부 — 관절 공간에서 CAN 프레임까지
-
-```mermaid
-flowchart LR
-    T["목표 (관절 공간)<br/>hipz/hipx/hipy/knee<br/>ankle_pitch/ankle_roll"] --> J2M
-
-    subgraph J2M["joint_to_motor()"]
-        HK["hip·knee<br/>cal.cal_to_raw()"]
-        AK["발목<br/>ankle.solve_ik()"]
-    end
-
-    J2M -->|"AnkleUnreachableError"| REJ0["rejects_ik++<br/>전송 없음"]
-    J2M --> PER
-
-    subgraph PER["모터별 (6회)"]
-        direction TB
-        P1["bus.state(mid)<br/>캐시된 실측"] --> P2{"유효?"}
-        P2 -->|아니오| RJ1["rejects_nostate++"]
-        P2 -->|예| P3["wrap.resolve_target_near_current<br/>인코딩 범위 안 표현 선택"]
-        P3 --> P4["guards.check_command"]
-        P4 -->|거부| RJ2["rejects_limit / jump ++"]
-        P4 -->|통과| P5["bus.build_mit_frame<br/>codec.pack_command"]
-    end
-
-    PER --> SW["bus.sync_write_mit(frames)"]
-    SW --> SEND["can.send_many()<br/>락 1회로 연속 전송"]
-    SEND --> DRAIN["can.drain(_ingest)<br/>응답 일괄 수거"]
-    DRAIN --> CACHE["_state 캐시 갱신"]
-    SW --> LAST["_last_sent_raw 저장<br/>← err 계산의 기준"]
-
-    classDef rej fill:#ffebee,stroke:#e53935,color:#111
-    class REJ0,RJ1,RJ2 rej
-```
-
-> `_last_sent_raw`가 **실제로 프레임에 실린 값**이다. `err = tgt − pos`의 `tgt`가
-> 이것이어야 모터 펌웨어 PD가 보는 오차와 일치한다.
-
----
-
-## 5. 브링업 메뉴 경로 — 지금 실제로 도는 것
-
-⚠️ **메뉴는 §3, §4를 거치지 않는다.** 버스를 직접 호출한다.
-
-```mermaid
-flowchart TD
-    M{"메뉴 선택"}
-
-    M -->|1| Z1["bus.disable_torque"]
-    Z1 --> Z2["commissioning.set_mechanical_zero<br/>0xFE — 플래시에 저장"]
-    Z2 --> Z3["calstore.save<br/>zero_reference 메모"]
-
-    M -->|2·3| MV
-
-    subgraph MV["_move_to() — 절대 setpoint 램프"]
-        direction TB
-        V1["bus.sync_read_states<br/>실측 1회"] --> V2["wrap.wrap_near<br/>최단 경로 목표"]
-        V2 --> V3["SetpointRamp.starting_at<br/>setpoint 초기화"]
-        V3 --> V4["ramp.advance(goal)<br/>← 직전 setpoint에서 전진"]
-        V4 --> V5["bus.state(mid) 캐시 읽기"]
-        V5 --> V6["wrap.resolve_target_near_current"]
-        V6 --> V7["guards.check_command"]
-        V7 --> V8["bus.send_mit → can.drain"]
-        V8 --> V9{"ramp.at_goal?<br/>setpoint 기준"}
-        V9 -->|아니오| V4
-        V9 -->|예| VDONE([도달])
-    end
-
-    M -->|4| S1["bus.sync_read_states<br/>leg.limit_margins<br/>calstore.missing_report"]
-    M -->|5| F1["bus.read_fault<br/>고장 비트 해석"]
-
-    classDef comm fill:#fff3e0,stroke:#fb8c00,color:#111
-    class Z2 comm
-```
-
-**§4와 비교했을 때 빠지는 것**: 관절 공간 변환, 발목 IK, `rejects` 집계,
-`telemetry_snapshot`. 메뉴는 모터 하나만 다루므로 관절 공간이 필요 없어서인데,
-그 결과 텔레메트리가 흐르지 않는다.
-
----
-
-## 6. 데이터 흐름 — 설정과 캘리브레이션
-
-```mermaid
-flowchart LR
-    subgraph FILES["파일 (코드 아님)"]
-        YAML["config/robot.yaml<br/>토폴로지 · 안전 마진"]
-        JSON["config/calibration/*.json<br/>sign · offset · limits · gains"]
-    end
-
-    subgraph VENDOR["코드 (데이터시트)"]
-        TB["tables.py<br/>인코딩 범위 · 명령 바이트"]
-    end
-
-    YAML -->|load_robot_config| RC["RobotConfig<br/>LegConfig · SafetyConfig"]
-    JSON -->|"store.load()"| MC["dict int→MotorCalibration"]
-
-    RC --> LEG2["SingleLeg"]
-    MC --> LEG2
-    TB --> ENC["encoding_for(model, MIT)"]
-    ENC --> BUS2["RobStrideBus"]
-    BUS2 --> LEG2
-
-    LEG2 --> USE1["raw_to_cal / cal_to_raw"]
-    LEG2 --> USE2["한계 검사 · margin"]
-    LEG2 --> USE3["kp · kd → MIT 프레임"]
-
-    BRING["scripts/bringup<br/>메뉴 1번"] -.->|"store.save()"| JSON
-
-    classDef file fill:#e3f2fd,stroke:#1e88e5,color:#111
-    class YAML,JSON file
-```
-
-**쓰기가 일어나는 유일한 곳은 `scripts/`다.** 런타임 제어 경로는 읽기만 한다.
-
----
-
-## 7. 텔레메트리 경로 — 그리고 끊긴 지점
-
-```mermaid
-flowchart TD
-    SNAP["robots/leg.telemetry_snapshot()<br/>스키마의 유일한 정의 지점<br/>83필드 ≈ 1.2KB"]
-    SNAP --> EMIT2["control/loop._emit()<br/>+ mode · loop_dt · cycle"]
-    EMIT2 --> SINK2["TelemetrySink(snapshot)"]
-    SINK2 --> UDP["UdpTelemetry.send<br/>JSON → UDP :9870"]
-    SINK2 --> CSV["CsvLogger.write<br/>헤더 = 첫 스냅샷의 keys()"]
-    UDP --> PJ["PlotJuggler<br/>우분투 PC"]
-    CSV --> DISK["보드 디스크<br/>N사이클 버퍼링<br/>E-STOP 시 즉시 flush"]
-
-    BR["scripts/bringup<br/>메뉴 루프"] -.->|"❌ 호출 안 함"| SNAP
-    BR -->|"sink.close()만"| SINK2
-
-    classDef broken fill:#ffebee,stroke:#e53935,stroke-dasharray:5,color:#111
-    class BR broken
-```
-
-**`control/loop.py`를 아무도 쓰지 않으므로 이 경로 전체가 아직 안 돈다.**
-`factory.build()`가 `TelemetrySink`를 만들지만 `bringup.py`는 `close()`만 부른다.
-
-잇는 방법 두 가지:
-1. `_move_to` 루프 안에서 `leg.telemetry_snapshot()`을 만들어 sink로
-2. 메뉴를 `LegControlLoop` 기반으로 다시 쓰기
-
----
-
-## 8. CAN 프레임 한 왕복
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant L as SingleLeg
-    participant B as RobStrideBus
-    participant CD as codec/mit
     participant C as CanBus
-    participant M as 모터 (RS02)
+    participant T as Telemetry
 
-    L->>B: build_mit_frame(mid, pos, kp, kd)
-    B->>CD: pack_command(..., enc)
-    Note over CD: 위치 16bit / 속도 12bit<br/>kp 12 / kd 12 / 토크 12<br/>= 8바이트
-    CD-->>B: bytes(8)
-    L->>B: sync_write_mit({mid: frame})
-    B->>C: send_many(frames)
-    Note over C: TX 락 1회로 연속 전송<br/>프레임 섞임 방지
-    C->>M: 11-bit ID + 8바이트
-    Note over M: τ = kp·(cmd−meas)<br/>  + kd·(0−vel) + τ_ff
-    M-->>C: 응답 프레임 (id, pos, vel, tau, temp)
-    B->>C: drain(_ingest)
-    Note over C: 큐가 빌 때까지.<br/>마지막 recv가 timeout만큼 블로킹
-    C->>B: _ingest(msg)
-    B->>CD: decode_state(data, enc)
-    CD-->>B: (id, pos_deg, vel_deg_s, tau_nm, temp_c)
-    B->>B: _state[mid] 갱신 (락)
-    L->>B: states() → 즉시 반환 (배선 안 탐)
+    L->>R: get_observation()
+    R-->>L: {knee.pos: ..., ...}   cal 공간
+
+    alt CONTROL 모드
+        L->>M: motion(t, obs)
+        M-->>L: {knee: 30.0, ...}  관절 이름
+        L->>R: build_commands(action)
+        Note over R: 계산만. CAN 안 씀
+        R-->>L: {10: MitCommand, ...}
+        L->>R: send(commands)
+        R->>B: send_mit()
+        B->>C: send_many()
+        L->>R: collect()
+        R->>B: collect(expect=n)
+        B->>C: drain(expect=n)
+        C-->>B: [CanFrame]
+        B-->>R: 응답 없는 id
+    else OBSERVE 모드
+        L->>R: refresh()
+        Note over R,B: 힘이 나가지 않는 명령을 보내고 응답을 받음
+    end
+
+    L->>T: record(loop_dt_ms)
+    Note over T: Robot 계약만 읽음. 통신하지 않음
+    L->>L: 다음 주기까지 기다림
 ```
 
-**상태 읽기가 O(1)인 이유**: `states()`는 캐시를 읽을 뿐 버스로 나가지 않는다.
-다만 캐시를 **채우는** `drain()`이 현재는 제어 루프 안에서 돈다
-(→ [motors/README.md](../src/huphy/motors/README.md)의 RX 3단계).
+**관찰 모드도 통신을 함.** MIT 프로토콜에는 읽기 전용 명령이 없어서, 아무것도
+보내지 않으면 아무것도 오지 않음.
 
 ---
 
-## 9. 한눈에 — 계층별 책임
+## 4. `build_commands()` 내부 — 관절에서 프레임까지
 
 ```mermaid
-flowchart LR
-    A["관절 각도<br/>hipz = 30°"] -->|"robots/leg"| B["모터 raw 각도<br/>m7 = 30°"]
-    B -->|"safety/wrap"| C["360° 표현 해소<br/>m7 = 30° or 390°"]
-    C -->|"safety/guards"| D{"한계 · 점프<br/>통과?"}
-    D -->|"codec/mit"| E["8바이트<br/>0x1A 0x2B ..."]
-    E -->|"motors/canbus"| F["CAN 프레임<br/>11-bit ID"]
-    F --> G["모터 펌웨어 PD"]
+graph TD
+    A["action  {knee: 30.0, ankle_pitch: 5.0, ankle_roll: 2.0}"] --> B{관절 이름 확인}
+    B -->|모르는 이름| ERR[ValueError]
+    B --> C{발목 둘 다 있나}
+    C -->|하나만| ERR2[ValueError]
+    C -->|둘 다| IK[kinematics.solve_ik]
+    IK -->|안 풀림| DROP[발목 통째로 버림]
+    IK -->|풀림| T["모터별 cal 목표  {knee: 30.0, ankle_a1: ..., ankle_a2: ...}"]
+    C -->|발목 없음| T
 
-    classDef reject fill:#ffebee,stroke:#e53935,color:#111
-    D -.->|거부| X["rejects++"]
-    class X reject
+    T --> G[safety.guards.apply]
+    G -->|NaN| RJ[거부]
+    G -->|현재 위치 모름| RJ
+    G --> CL["한계 클리핑  cal 공간"]
+    CL --> JP[점프 클리핑]
+    JP --> R2R[cal_to_raw]
+    R2R --> MC[MitCommand]
+
+    G -.기록.-> CNT[counters]
+    JP -.기록.-> CNT
+
+    style G fill:#fff0e0
+    style R2R fill:#e0ffe0
 ```
 
-각 화살표가 한 계층이다. **위로 갈수록 사람의 언어, 아래로 갈수록 기계의 언어.**
+**검사가 변환보다 먼저임.** 한계가 cal 공간에 있으므로 raw 로 내린 뒤 검사하면
+`sign` 이 -1 인 관절에서 부호가 뒤집혀 한계가 반대로 걸림.
+
+**발목의 두 실패가 다름.** IK 가 안 풀리면 통째로 버리고, 한계에 잘리는 것은
+개별로 처리함 — 잘린 각도 쌍도 대응하는 발 자세가 있음.
+
+---
+
+## 5. 브링업 메뉴 경로
+
+```mermaid
+graph LR
+    U[사람] --> M[메뉴 항목]
+    M --> MO[Motion 을 만듦]
+    MO --> RUN["_run(loop, motion, 초)"]
+    RUN --> LP[ControlLoop.run]
+    LP --> LEG[Leg]
+    LP --> TEL[Telemetry]
+    LEG --> BUS[bus]
+
+    style RUN fill:#e0ffe0
+```
+
+**메뉴가 로봇을 직접 부르지 않음.** 동작만 정하고 루프에 넘김.
+
+직접 부르면 그 경로에서만 텔레메트리·주기 측정·정지 순서가 빠짐. 그러면 그래프가
+안 나오는데 텔레메트리가 고장난 줄 알게 됨 ([이슈 #4](issues.md)).
+
+테스트가 `ControlLoop.run` 을 감시해 이것을 고정함.
+
+### 커미셔닝은 루프를 타지 않음
+
+```mermaid
+graph LR
+    U[사람] --> C[commission 명령]
+    C --> CM[commissioning 함수]
+    CM --> BUS[bus]
+
+    style C fill:#ffe0e0
+```
+
+영점·CAN id·프로토콜은 **반복하지 않는 조작이라 주기가 없음.** 되돌리기 어려워서
+`--yes` 를 요구하고, 승인 확인이 버스를 열기 전에 일어남.
+
+---
+
+## 6. 설정과 실측값
+
+```mermaid
+graph TD
+    Y[config/robot.yaml] -->|사람이 적음| L[load_robot]
+    J[config/calibration/*.json] -->|기계가 잼| CL[calibration.load]
+
+    L --> RC[RobotConfig]
+    RC --> S[SafetyConfig]
+    RC --> T[TelemetryConfig]
+    RC --> LC[LimbConfig]
+    LC --> MO["Motor  id, model, limits_deg, gains"]
+
+    CL --> MC["MotorCalibration  sign, offset, zero_reference"]
+
+    MO --> LEG[Leg]
+    MC --> LEG
+    S --> LEG
+    T --> TEL[Telemetry]
+
+    LEG -.->|쓰기 없음| X1[ ]
+    CM[commissioning zero] -->|쓰기| J
+
+    style Y fill:#e0f0ff
+    style J fill:#fff0e0
+```
+
+**제어 경로는 읽기만 함.** 쓰기는 커미셔닝에서만 일어남 — 제어 중에 실측값이
+바뀌면 좌표계가 도중에 옮겨감.
+
+두 파일을 나눈 이유: 무릎 모터를 갈면 `sign`/`offset` 은 다시 재야 하지만
+`limits_deg` 는 그대로임. 한 파일에 두면 **한쪽을 고칠 때 다른 쪽을 덮어씀.**
+
+---
+
+## 7. 텔레메트리 경로
+
+```mermaid
+graph TD
+    LP[ControlLoop] -->|record| TM[Telemetry]
+    TM --> BF[build_fast]
+    TM --> BD[build_diag]
+
+    BF --> R1[robot.get_observation]
+    BF --> R2[robot.last_sent]
+    BD --> R3[robot.link_status]
+    BD --> R4[robot.counters]
+    BD --> R5[bus.counters]
+
+    BF -->|매 주기| U1[UDP 850B]
+    BD -->|10주기마다| U2[UDP 950B]
+    BF --> CSV[CSV 한 줄]
+    BD --> CSV
+
+    style U1 fill:#e0ffe0
+    style U2 fill:#fff0e0
+```
+
+**필드 이름을 정하는 곳이 하나임.** UDP 와 CSV 가 같은 사전을 소비함.
+
+**패킷을 둘로 나눔.** 합치면 66필드 약 1.8 KB 로 MTU(1500)를 넘어 조각나고, 조각
+하나만 잃어도 패킷 전체가 버려짐.
+
+CSV 는 안 나눔 — 크기 제약이 없고 한 줄에 다 있어야 대조하기 쉬움.
+
+### 양다리
+
+```
+Telemetry(left_leg)   -> 패킷 둘
+Telemetry(right_leg)  -> 패킷 둘
+```
+
+합쳐 보내지 않음. `merge()` 는 CSV 전용임.
+
+---
+
+## 8. CAN 한 왕복
+
+```mermaid
+sequenceDiagram
+    participant L as Leg
+    participant B as RobStrideBus
+    participant D as codec/mit
+    participant C as CanBus
+    participant M as 모터
+
+    L->>B: send_mit({10: MitCommand})
+    B->>D: pack_command(pos, vel, kp, kd, tau, enc)
+    Note over D: deg -> rad -> 양자화 -> 8바이트
+    D-->>B: bytes
+    B->>C: send_many([CanFrame])
+    C->>M: 11-bit 표준 프레임
+
+    Note over M: tau = kp*(목표-현재) + kd*(0-속도) + tau_ff
+
+    M-->>C: 상태 프레임
+    C->>C: drain(expect=n)
+    C-->>B: [CanFrame]
+    B->>D: decode_state(data, enc)
+    Note over D: 8바이트 -> 역양자화 -> rad -> deg
+    D-->>B: (id, pos, vel, tau, temp)
+    B->>B: 캐시 갱신
+    B-->>L: 응답 없는 id
+```
+
+**응답이 곧 ack 임.** MIT 모드는 명령을 받으면 반드시 답하므로, 안 오면 그 모터가
+명령을 처리하지 않은 것임.
+
+CAN 하드웨어 ACK 는 버스의 아무 노드나 찍어주므로 "누군가 들었다" 일 뿐임 —
+그건 `tx_errors` 가 봄.
+
+### 프레임 배치
+
+```
+명령 (Command 3)                    응답 (Response Command 1)
+Byte0~1              목표각 16bit   Byte0                모터 CAN ID
+Byte2 + Byte3[7:4]   목표속도 12bit  Byte1~2              현재각 16bit
+Byte3[3:0] + Byte4   Kp     12bit   Byte3 + Byte4[7:4]   현재속도 12bit
+Byte5 + Byte6[7:4]   Kd     12bit   Byte4[3:0] + Byte5   현재토크 12bit
+Byte6[3:0] + Byte7   목표토크 12bit  Byte6~7              온도
+```
+
+**배치가 다름** — 응답은 앞에 모터 ID 가 붙어 한 칸씩 밀림.
+
+---
+
+## 9. 한눈에
+
+| 계층 | 무엇을 하나 | 무엇을 모르나 |
+|---|---|---|
+| `scripts/` | 사람의 입력을 동작으로 | 프레임, 바이트 |
+| `control/` | 주기, 모드, 시작·종료 순서 | 관절 이름, 모터 |
+| `robots/` | 관절 ↔ 모터, cal ↔ raw, 안전 | 바이트 |
+| `kinematics/` | 발목 pitch/roll ↔ a1/a2 | 모터, CAN |
+| `safety/` | 한계·점프·NaN 검사 | 좌표계가 무엇인지 |
+| `config/` | 설정 읽기 | 모터, CAN |
+| `calibration/` | 실측값 읽기·쓰기 | 모터, CAN |
+| `motors/base` | 벤더 중립 자료형 | 프레임 배치 |
+| `robstride/` | 벤더 사양, 코덱, 버스 | 관절 이름 |
+| `canbus/` | 8바이트 송수신 | 바이트의 뜻 |
+| `telemetry/` | 관찰 | 제어에 끼어들지 않음 |

@@ -1,279 +1,301 @@
-# 패키지 구조 설계 — 단일 다리에서 로봇 전체로
+# 아키텍처 — 계층과 의존 방향
 
-지금은 다리 하나(6모터·CAN 1버스)만 있지만, 이후 **양다리 → 로봇 전체**로 확장된다는
-전제로 계층을 나눈다. 참고한 것은 [LeRobot](https://github.com/huggingface/lerobot)의
-`motors/` · `robots/` · `configs/` 3층 분리이고, 이 프로젝트 사정에 맞춰
-`safety/` · `control/` · `kinematics/`를 추가로 분리했다.
+패키지가 어떻게 나뉘어 있고 **왜 그렇게 나뉘었는지**. 각 폴더의 내용은 소스 옆
+README 에 있고, 여기는 폴더들 사이의 관계만 다룸.
+
+읽는 순서: [루트 README](../README.md) → 이 문서 → 폴더별 README.
 
 ---
 
-## 1. 계층과 의존 방향
-
-의존은 **한 방향으로만** 흐른다. 이 규칙이 깨지면 구조가 무의미해진다.
+## 1. 의존은 한 방향으로만 흐름
 
 ```
-scripts ──→ robots ──→ { motors, kinematics, safety, config }
-                │
-                └──→ telemetry   (단방향. telemetry는 아무것도 import 하지 않음)
+scripts/                진입점
+   │
+control/                주기와 안전
+   │
+robots/                 ─── 관절 이름 ↔ 모터 id, cal ↔ raw ───
+   │  ├─ kinematics/
+   │  ├─ safety/
+   │  ├─ config/
+   │  └─ calibration/
+   │
+motors/                 모터 id 와 raw 각도
+   └─ robstride/
 ```
+
+**위가 아래를 부름. 아래는 위를 모름.**
+
+`telemetry/` 는 이 줄기에서 벗어나 있음 — `Robot` 계약만 읽고 아무도 부르지 않음.
+관측이 제어에 끼어들지 않게 하려는 것임.
+
+### 계층이 아는 것
 
 | 계층 | 아는 것 | 모르는 것 |
 |---|---|---|
-| `motors/` | 모터 ID, 원시 각도, CAN 프레임 | "무릎"·"다리"가 무엇인지 |
-| `kinematics/` | 링크 기하, 각도 | CAN, 모터 ID |
-| `safety/` | 숫자, 한계값 | CAN, 상태 (**순수 함수, 상태 없음**) |
-| `config/` | 값의 스키마 | 나머지 전부 |
-| `robots/` | 관절 이름 ↔ 모터 매핑 | CAN 프레임 포맷 |
-| `control/` | 궤적, 주기 | 프레임 인코딩 |
-| `telemetry/` | dict 하나 | **로봇 구조를 전혀 모름** |
+| `control/` | 시간, 주기 | 관절 이름도, 모터도 모름 |
+| `robots/` | 관절 이름, cal 각도 | 바이트, 프레임 |
+| `motors/` | 모터 id, raw 각도 | "무릎" 이 무엇인지 |
+| `canbus.py` | 8바이트와 CAN id | 바이트의 뜻 |
 
-### 왜 `kinematics/` · `safety/`를 순수 함수로 빼는가
-
-**하드웨어 없이 테스트하기 위해서다.** 현재 360° wrap 로직(`_raw_to_cal_near_interval`,
-`_resolve_raw_target_near_current`)은 ±4바퀴 탐색과 구간중심 tie-break 같은 미묘한
-규칙을 담고 있는데, CAN 버스와 락에 얽혀 있어 검증할 방법이 없다. 순수 함수로 빼면
-단위 테스트가 가능해지고, 이후 리팩토링의 안전망이 된다.
-
-### 왜 `telemetry/`에 스키마가 없는가
-
-스키마는 "이 로봇이 무슨 관절을 갖는가"를 알아야 하는데, telemetry가 그걸 알면 로봇에
-의존하게 된다. **LeRobot의 `observation_features` 패턴을 따른다** — 로봇이 자기 스키마를
-선언하고, telemetry는 받은 dict를 직렬화만 한다. 그래야 다리 하나든 로봇 전체든 같은
-telemetry 코드가 그대로 돈다. (→ [monitoring.md](monitoring.md) §4.4 "스키마 단일 정의")
+이 표가 **가장 중요한 규칙임.** 어떤 계층이 자기 줄 밖의 것을 알기 시작하면 그
+계층만으로는 시험할 수 없게 됨.
 
 ---
 
-## 2. 폴더 구조
+## 2. 순수 계산을 아래로 밀어 둠
+
+`python-can` 을 import 하는 파일이 **하나뿐임.**
 
 ```
-HUPHY/
-├── pyproject.toml                 # 단일 진실 공급원. sys.path 해킹 제거
-├── src/huphy/
-│   ├── motors/                          ← 모터 자체의 레코드 + 버스
-│   │   ├── base.py                      #   벤더 중립: MotorState, MotorCalibration, MotorsBus(ABC)
-│   │   ├── canbus.py                    #   python-can 래핑, TX/RX 락, 드레인
-│   │   └── robstride/
-│   │       ├── tables.py                #   [프로토콜][모델] 인코딩 범위, CAN 명령바이트,
-│   │       │                            #   파라미터 인덱스, 열/부하 한계, 고장비트 정의
-│   │       ├── codec/
-│   │       │   ├── mit.py               #   MIT 표준 프레임 (11-bit ID) — 현재 사용
-│   │       │   └── private.py           #   private 확장 프레임 (29-bit ID)
-│   │       ├── params.py                #   파라미터 읽기/쓰기/플래시 저장
-│   │       ├── commissioning.py         # ★ 1회성·영구 조작. 런타임 코드는 import 금지
-│   │       └── bus.py                   #   런타임 전용: connect, enable/disable, 제어모드
-│   │                                    #   전환, sync_read/sync_write, 고장 읽기
-│   │
-│   ├── kinematics/
-│   │   └── ankle.py                     #   2모터 링키지 IK/FK
-│   │
-│   ├── safety/                          ← 전부 순수 함수
-│   │   ├── wrap.py                      #   360° 표현 해소
-│   │   ├── limits.py                    #   클램프, margin 계산
-│   │   └── guards.py                    #   점프 가드, near-stop 판정
-│   │
-│   ├── config/                          ← 스키마(dataclass). 값이 아님
-│   │   ├── motor.py                     #   MotorConfig(id, model, sign, offset, limits, gains)
-│   │   ├── robot.py                     #   LegConfig, BipedConfig, RobotConfig(base)
-│   │   └── loader.py                    #   YAML/JSON → dataclass
-│   │
-│   ├── robots/
-│   │   ├── base.py                      #   Robot(ABC) + observation_features/action_features
-│   │   ├── leg.py                       #   SingleLeg(Robot)
-│   │   └── biped.py                     #   Biped(Robot) — Leg 2개 조합
-│   │
-│   ├── control/
-│   │   ├── trajectory.py                #   절대 setpoint 램프 ← 옵션3 수정이 여기
-│   │   └── loop.py                      #   제어 루프, 주기 관리
-│   │
-│   ├── telemetry/
-│   │   ├── udp.py                       #   UdpTelemetry
-│   │   └── csv_log.py                   #   CSV writer
-│   │
-│   └── scripts/
-│       ├── bringup.py                   #   대화형 메뉴
-│       ├── rom_diagnostic.py
-│       └── zero_persistence.py
-│
-├── config/                        ← 실제 값 (코드 아님)
-│   ├── robot.yaml
-│   └── calibration/{left,right}_leg.json
-├── layouts/                       # PlotJuggler 레이아웃 .xml
-└── tests/
+motors/canbus.py    ← 여기
 ```
 
-### 2.1 `motors/` 내부를 더 쪼개는 이유
+그것도 함수 안에서 import 함. 모듈 최상단에 두면 이 파일을 import 하는 것만으로
+`python-can` 이 필요해지고, 순수 계층의 테스트까지 같이 막힘.
 
-벤더 드라이버를 파일 하나로 두는 것도 흔한 선택이다 (LeRobot의 `robstride.py`는
-1,086줄 단일 파일). 그럼에도 나누는 이유가 셋 있다.
+그래서 다음이 전부 하드웨어 없이 돌아감.
 
-#### (1) 인코딩 범위는 "모델별"이 아니라 "프로토콜 × 모델"이다
+```
+safety/          한계·점프·NaN 검사
+kinematics/      발목 IK/FK
+config/          설정 읽기
+calibration/     실측값 읽기·쓰기
+motors/base.py   자료형과 인터페이스
+robstride/tables.py, codec/    벤더 사양, 프레임 배치
+control/motions.py             무엇을 시킬지
+```
 
-RS02 하나에도 범위가 두 벌이다:
+**테스트 642개가 `python-can` 없이 돌아감.** 전송 계층은 가짜 모듈로 갈아끼워
+시험함.
 
-| 프로토콜 | 위치 | 속도 | 토크 |
+### 왜 이렇게까지 하나
+
+로봇을 만질 수 있는 시간은 짧고, 만지는 동안은 코드를 고치기 어려움. 계산이 맞는지를
+책상에서 확정해 두면 실물에서는 **배선·프로토콜·기하만** 보면 됨.
+
+---
+
+## 3. `robots/` 가 경계인 이유
+
+관절 이름과 모터 id 는 다른 세계임.
+
+```
+control/    "무릎 30도"           사람과 궤적이 쓰는 말
+robots/     ─── 여기서 번역 ───
+motors/     "m10 에 62.79도"      배선과 프로토콜이 쓰는 말
+```
+
+네 가지가 **이 경계에서만** 일어남.
+
+| | 무엇 |
+|---|---|
+| 관절 이름 → 모터 id | `robot.yaml` 의 매핑 |
+| cal → raw | 캘리브레이션의 `sign`/`offset` |
+| 발목 pitch/roll → a1/a2 | 기구학 |
+| 한계·점프·NaN 검사 | `safety.guards` (cal 공간) |
+
+한 군데라도 다른 계층으로 새면 같은 변환이 두 곳에 생기고, **한쪽만 고쳐짐.**
+
+### 검사가 변환보다 먼저임
+
+한계는 cal 공간에 있음. raw 로 내린 뒤 검사하면 `sign` 이 -1 인 관절에서 부호가
+뒤집혀 **한계가 반대로 걸림.**
+
+```python
+leg.build_commands({"knee": 200.0})     # sign = -1
+
+last_sent["knee"]            →   71.79    cal 로 잘림
+commands[10].position_deg    →  -71.79    그 뒤에 raw
+```
+
+---
+
+## 4. `motors/` 를 더 쪼갠 이유
+
+```
+motors/
+├── base.py       벤더 중립 자료형
+├── canbus.py     CAN 전송
+└── robstride/
+    ├── tables.py         벤더 사양
+    ├── codec/mit.py      프레임 배치
+    ├── bus.py            런타임 조작
+    └── commissioning.py  조립할 때 한 번
+```
+
+### 인코딩 범위는 "프로토콜 × 모델" 임
+
+같은 RS02 라도 프로토콜에 따라 속도 범위가 다름.
+
+| 조합 | 위치 | 속도 | 토크 |
 |---|---|---|---|
-| private (29-bit 확장 프레임) | ±12.57 rad | ±44 rad/s | ±17 N·m |
-| **MIT (11-bit 표준 프레임)** | ±12.57 rad | **±33 rad/s** | ±17 N·m |
+| RS02 / MIT | ±12.57 rad | **±33 rad/s** | ±17 N·m |
+| RS02 / private | ±12.57 rad | **±44 rad/s** | ±17 N·m |
+| RS00 / MIT | ±12.57 rad | ±33 rad/s | ±14 N·m |
 
-"모터 사양"이라는 단일 개념으로 뭉뚱그리면 프로토콜 축이 사라지고, 다른 프로토콜의
-값을 가져다 쓰는 실수가 난다. **실제로 이 프로젝트와 LeRobot 양쪽에서 이미 발생한
-오류다** (→ 부록). `tables.py`를 `[프로토콜][모델]`로 인덱싱하고 `codec/`을 프로토콜별로
-나누면 구조가 이 실수를 막는다.
+이 축을 없애고 "모델별 사양" 하나로 뭉치면 **private 값을 MIT 에 가져다 쓰는
+실수가 남.** 틀리면 속도 읽기가 44/33 = 1.33배 어긋남.
 
-#### (2) 커미셔닝과 런타임은 성격이 정반대다
+`base.py` 에 인코딩 범위를 두지 않은 이유이기도 함 — MIT 류 특유의 개념이라
+벤더 중립이 아님. CANopen 계열은 pulse 단위를 쓰고 인코딩 범위라는 개념 자체가 없음.
 
-| | 커미셔닝 | 런타임 |
+### 커미셔닝과 런타임은 성격이 정반대임
+
+| | `bus.py` | `commissioning.py` |
 |---|---|---|
-| 빈도 | 조립 시 1회 | 100 Hz |
-| 지속성 | **플래시에 영구 저장** | 휘발 |
-| 되돌리기 | 어려움 (전원 재투입 필요) | 즉시 |
-| 예 | CAN ID 변경, 프로토콜 전환, 기계영점, 파라미터 저장, 엔코더 캘리브레이션 | enable/disable, 모션 명령, 상태 읽기 |
+| 언제 | 매 주기 100Hz | 조립할 때 한 번 |
+| 되돌리기 | 쉬움 | **어려움** |
+| 무엇 | 토크, 명령, 상태 | 영점, CAN id, 프로토콜 |
 
-한 클래스에 섞으면 제어 루프 코드가 되돌리기 어려운 API에 손이 닿는다. 파일로 격리해
-**런타임 모듈은 `commissioning.py`를 import하지 않는다**는 규칙을 둔다.
+`MotorsBus` 계약에 커미셔닝 조작이 없으므로 제어 코드에서 **부를 방법 자체가 없음.**
 
-현재는 이 성격의 코드가 세 군데에 흩어져 있다 — `test_zero_persistence.py`(독립 스크립트),
-`_menu_set_zero`(메뉴 함수), `set_zero_all`/`zero_here`(컨트롤러 메서드).
+### 모션 명령 말고도 경로가 있음
 
-#### (3) 모션 명령 외의 경로가 둘 더 있다
+```
+동작 제어    MIT 프레임 8바이트          매 주기
+제어 명령    [0xFF]*6 + F_CMD + 명령     활성·정지·고장
+파라미터     29-bit 확장 프레임           미구현
+```
 
-MIT 프레임으로 위치를 보내는 것만이 모터와의 대화가 아니다.
-
-- **파라미터 R/W** (`params.py`) — `limit_torque`, `CAN_TIMEOUT`, 속도루프 게인 등.
-  인덱스 기반이고 모션 명령과 완전히 다른 프레임을 쓴다. 플래시 저장도 여기.
-- **제어 모드 전환** (`bus.py`) — 모터는 MIT / Position / Velocity 세 모드를 지원하고
-  명령으로 전환한다. 모드마다 입력 구성이 다르다 (MIT은 5개 파라미터, Position은
-  목표위치+속도제한). 예를 들어 "영점으로 이동"은 모터가 궤적을 자체 생성하는
-  Position 모드가 더 단순하고 안전할 수 있다.
-
-#### `MotorSpec`을 `base.py`에서 뺀 이유
-
-`base.py`는 벤더 중립이어야 하는데 `MotorSpec(pmax_rad, vmax_rad_s, tmax_nm)`은
-**MIT류 프로토콜 특유의 개념**이다. CANopen 계열은 pulse 단위를 쓰고 이런 인코딩 범위
-개념 자체가 없다. 벤더 중립 자리에는 `MotorState`/`MotorCalibration`/`MotorsBus(ABC)`만
-두고, 인코딩 사양은 `robstride/tables.py`로 내린다.
+세 번째가 아직 없어서 `zero_sta` 와 프로토콜 플래그를 코드로 읽을 수 없음
+([이슈 #11](issues.md)).
 
 ---
 
-## 3. 현재 코드의 이동 경로
+## 5. 설정과 실측값을 나눈 이유
 
-| 현재 | 이동 후 | 성격 |
-|---|---|---|
-| `utils/mit_codec.py` | `motors/robstride/codec/mit.py` | 거의 그대로 |
-| `robot_constant.py` `MOTORS`, `CAN_CMD_*` | `motors/robstride/tables.py` | **벤더 사양** (프로토콜 × 모델) |
-| `robot_constant.py` `MOTOR_SIGN/OFFSET/LIMITS/GAINS` | `config/calibration/*.json` | **코드 → 데이터** |
-| `robot_constant.py` `LEG_*_IDS`, `LEG_JOINT_NAMES` | `config/robot.yaml` | 토폴로지 |
-| `robot_constant.py` `COMMAND_MARGIN_DEG` 등 | `config/robot.yaml` | 안전 파라미터 |
-| `ankle_kinematics.py` | `kinematics/ankle.py` | 그대로 |
-| `_send8`, `_drain_rx_states`, `_recv_motor_reply` | `motors/canbus.py` | 벤더 무관 |
-| `_request_state`, `enable`/`disable`, `_send_cmd_ff` | `motors/robstride/bus.py` | **런타임** |
-| `set_zero`, `set_zero_all`, `zero_here`, `_menu_set_zero` | `motors/robstride/commissioning.py` | **1회성·영구** |
-| `test_zero_persistence.py` | `scripts/` + `commissioning.py` | 〃 |
-| `_raw_to_cal_near_interval`, `_resolve_raw_target_near_current`, `_raw_limits_near_ref` | `safety/wrap.py` | **순수 함수화** |
-| `_raw_command_in_limits`, `_is_near_stop`, `_recompute_command_limits` | `safety/limits.py` | 순수 함수화 |
-| `_passes_action_update_jump_guard` | `safety/guards.py` | 순수 함수화 |
-| `_motor_to_joint`, `_joint_to_motor` | `robots/leg.py` | 로봇 의미론 |
-| `_run_loop` | `control/loop.py` | |
-| `_step_motor_toward_raw` | `control/trajectory.py` | **여기서 절대 setpoint 램프로 수정** |
-| `_log_state`, `_open_log` | `telemetry/csv_log.py` + `robots/base.py` 스키마 | |
-| `__main__` 메뉴 | `scripts/bringup.py` | |
-| `run_full_rom_diagnostic` | `scripts/rom_diagnostic.py` | |
+```
+config/robot.yaml           사람이 적는 것    도면·배선·튜닝에서 옴
+config/calibration/*.json   기계가 재는 것    실물을 측정해서 나옴
+```
 
-### 핵심: `robot_constant.py`는 세 갈래로 쪼개진다
+무릎 모터를 갈면 다시 재야 하는 것과 그대로인 것이 갈림.
 
-지금 한 파일에 **벤더 사양 · 로봇 토폴로지 · 캘리브레이션**이 섞여 있다. 이것이
-`CALIBRATED = False`가 풀리지 않는 구조적 이유다 — 값을 하나 실측할 때마다 소스를
-고쳐야 하고, 좌우 다리가 하나의 전역을 공유하며, 측정 결과가 코드 리뷰 대상이 된다.
-
-| 갈래 | 성격 | 위치 |
-|---|---|---|
-| 벤더 사양 (pmax/vmax/tmax, CAN 명령바이트) | 데이터시트에서 옴. 절대 안 바뀜 | `motors/robstride/tables.py` |
-| 로봇 토폴로지 (모터 ID ↔ 관절, 버스 배치) | 조립 구성. 드물게 바뀜 | `config/robot.yaml` |
-| 캘리브레이션 (sign/offset/limits/gains) | **실측값. 자주 바뀜** | `config/calibration/*.json` |
-
----
-
-## 4. 확장 시나리오 검증
-
-설계가 맞는지 보는 방법 — 확장할 때 **건드리는 파일이 적어야** 한다.
-
-| 확장 | 건드리는 곳 |
+| | 모터를 갈면 |
 |---|---|
-| 다리 1개 → 2개 | `config/robot.yaml`만. `Biped`가 `SingleLeg` 2개를 들면 끝 |
-| 팔 추가 | `robots/arm.py` 신규 + yaml. motors/safety/kinematics **무변경** |
-| 다른 벤더 모터 | `motors/<vendor>/` 신규. `MotorsBus` 인터페이스만 맞추면 robots **무변경** |
-| RS02 → RS03 교체 | yaml의 `model`만. `tables.py`에 이미 있음 |
-| 고장비트 필요 | `robstride/private_codec.py` 추가. bus가 두 프로토콜 병용 |
-| 발목 기구 변경 | `kinematics/ankle.py`만 |
-| IMU 추가 | `sensors/` 신규 + `observation_features`에 필드 추가 |
+| `sign`, `offset_deg`, `zero_reference` | **다시 재야 함** |
+| `limits_deg` | 그대로. 하드스톱은 쇳덩어리임 |
+| `kp`, `kd` | 그대로. 같은 모델이면 그대로 씀 |
+
+**한 파일에 두면 한쪽을 고칠 때 다른 쪽을 덮어씀.** 캘리브레이션 절차는 파일을
+통째로 새로 쓰므로, 그때 안 바뀌어야 할 값까지 같이 날아감.
+
+### 한계값이 cal 공간에 있는 이유
+
+관절 가동범위는 기구 설계에서 오는 값이라 **첫 동작 전에 이미 알고 있어야 함.**
+움직여 보고 알아내는 값이 아님 — 다리를 손으로 하드스톱까지 훑는 것이 중력과
+감속비 때문에 불가능하고, 발목은 두 모터가 폐루프로 물려 있어 한쪽만 훑으면 링크가
+물림.
+
+설계값이므로 **영점을 어디에 잡았는지와 무관함.** raw 에 두면 영점을 다시 잡을 때
+숫자는 그대로인데 가리키는 물리적 위치가 달라짐 ([이슈 #2](issues.md)).
 
 ---
 
-## 5. 이행 순서
+## 6. 계산·전송·수거를 나눈 이유
 
-**한 번에 하지 않는다.** 검증 수단이 없는 상태에서 1,566줄을 통째로 쪼개면 되돌릴 수
-없다. 다만 **뼈대는 먼저 잡는다** — 빈 패키지 생성은 비용이 0이고 `git mv`도 싸다.
+```python
+left  = left_leg.build_commands(action_left)     # ① 계산. CAN 안 씀
+right = right_leg.build_commands(action_right)
+left_leg.send(left)                              # ② 전송을 몰아서
+right_leg.send(right)
+left_leg.collect()                               # ③ 그 다음에 수거
+right_leg.collect()
+```
 
-| 단계 | 내용 | 위험도 |
-|---|---|---|
-| 0 | 첫 커밋 | — |
-| 1 | `pyproject.toml` + 디렉터리 뼈대 + **순수 이동만** (`mit_codec`, `ankle_kinematics`). 로직 변경 0 | 낮음 |
-| 2 | `tables.py` 분리 — 벤더 사양을 `robot_constant`에서 빼기 | 낮음 |
-| 3 | **`telemetry/` 작성** — 제자리에. `SingleLeg`는 아직 통짜여도 됨 | 낮음 |
-| 4 | `safety/` 추출 + **테스트 작성** ← 검증 수단 확보 | 중간 |
-| 5 | `config/` + 캘리브레이션 JSON 외부화 | 중간 |
-| 6 | `motors/robstride/bus.py` 추출 | 높음 |
-| 7 | `control/` 분리 + **옵션3 수정** (텔레메트리로 전후 비교) | 높음 |
-| 8 | `robots/biped.py` | — |
+한 함수가 셋을 다 하면 버스가 둘일 때 이렇게 됨.
 
-### 3번이 4번보다 앞인 이유
+```
+can0 (왼다리)  [계산][전송][─── 수거 대기 ───]
+can1 (오른다리)                                [계산][전송]
+                                               ^ 여기서야 시작
+```
 
-텔레메트리가 있어야 6~7단계 리팩토링에서 **"바꿔도 응답이 같다"를 확인**할 수 있다.
-3번 시점의 `SingleLeg`는 현재 클래스를 파일만 옮긴 상태여도 무방하다.
+두 버스는 물리적으로 독립이라 진짜로 겹쳐 보낼 수 있는데 그 병렬성을 못 씀.
+**수거가 더 비쌈** — `recv()` 는 큐가 비면 타임아웃만큼 블로킹함.
 
----
-
-## 6. 미결정 사항
-
-| # | 항목 | 선택지 |
-|---|---|---|
-| 0 | **모터의 통신 프로토콜 모드** ❗ | RobStride 공장 기본값은 private(29-bit)이고 현재 코드는 MIT(11-bit)를 가정한다. 틀리면 **명령이 무시되고 에러도 안 난다** — 연결도 되고 코드도 안 죽는데 모터만 안 움직인다. 확인: motorstudio로 `0x201F protocol_1` 읽기, 또는 11-bit `enable`에 응답이 오는지. 결과에 따라 A(`set_protocol`로 전환 + 전원 재투입) 또는 B(`codec/private.py` 구현) 선택 |
-| a | `MotorsBus` 인터페이스를 LeRobot과 맞출 것인가 | `sync_read`/`sync_write`/`enable_torque`/`read_calibration` 이름을 그대로 쓰면 이후 LeRobot 생태계 연결 시 어댑터가 얇아진다. 대신 현재 코드와 이름이 달라 이행 비용이 든다 |
-| b | config 포맷 | YAML / JSON / draccus dataclass. draccus는 의존성이 늘지만 CLI 인자가 공짜로 생긴다 (LeRobot 방식) |
-| c | 캘리브레이션 파일 단위 | 다리별 / 모터별 / 로봇 통짜. LeRobot은 로봇 1대당 1파일. 현재는 오른쪽 다리만 연결되어 있어 다리별이 맞아 보인다 |
+다리 하나뿐이면 `send_action()` 하나로 충분함 ([이슈 #10](issues.md)).
 
 ---
 
-## 부록: LeRobot 대조
+## 7. 관측이 제어 줄기에서 벗어나 있는 이유
 
-참고용으로 클론해둔 `lerobot/`(저장소 루트, git 추적 제외)의 대응 위치.
+```
+telemetry.snapshot.build(robot)     Robot 계약만 읽음. 통신하지 않음
+```
 
-| HUPHY | LeRobot |
+`get_observation()`, `last_sent`, `counters` 만 씀. 그래서 **어느 경로에서 부르든
+같은 값이 나옴** — 제어 루프든, 대화형 메뉴든.
+
+그리고 **예외를 던지지 않음.** 네트워크가 끊기거나 디스크가 차는 것은 로봇 입장에서
+정상 상황임. 관측이 제어를 멈추면 관측할 대상이 없어짐.
+
+### 필드 이름을 한 곳에서만 정함
+
+UDP 와 CSV 가 같은 사전을 소비함. 두 군데에서 만들면 CSV 헤더에는 있는데 UDP 에는
+없는 값이 생기고, 어느 쪽이 맞는지 알 수 없어짐.
+
+`field_names()` 가 **실행 전에** 목록을 냄 — CSV 헤더를 첫 줄에 써야 하기 때문임.
+
+---
+
+## 8. 확장
+
+### 팔이 붙으면
+
+```
+robots/
+├── leg.py        지금
+├── arm.py        추가
+└── humanoid.py   Leg 둘과 Arm 둘을 들고 있음
+```
+
+`Humanoid` 도 같은 `Robot` 계약을 채움. `build_commands`/`send`/`collect` 를 나눠
+둔 것이 그때 쓰임.
+
+`config/schema.py` 는 그대로임 — `limbs` 에 항목이 늘어날 뿐이고,
+`kind: arm` 으로 골라낼 수 있음.
+
+### 벤더가 추가되면
+
+```
+motors/
+├── base.py       그대로
+├── canbus.py     그대로 (CAN 을 쓰는 벤더면)
+├── robstride/
+└── 새벤더/
+```
+
+`Motor.model` 이 `str` 인 이유임 — 여기서 enum 으로 좁히면 벤더를 추가할 때마다
+중립 계층을 고쳐야 함. 유효한 모델인지는 벤더 버스가 생성자에서 판단함.
+
+### 버스가 늘어나면
+
+`LimbConfig` 하나가 CAN 채널 하나에 대응함. 팔다리를 추가하면 채널도 같이 늘어남.
+
+`RobotConfig` 가 **채널을 넘어서** id 중복을 확인함 — 다른 팔다리라도 같은 채널이면
+같은 선을 씀.
+
+---
+
+## 9. 미결정
+
+| | 왜 아직 |
 |---|---|
-| `motors/base.py` | `src/lerobot/motors/motors_bus.py` (`Motor`, `MotorCalibration`, `MotorsBusBase`) |
-| `motors/robstride/` **전체** | `src/lerobot/motors/robstride/robstride.py` **단일 1,086줄** |
-| `robots/base.py` | `src/lerobot/robots/robot.py` (`Robot` ABC) |
-| `config/robot.py` | `src/lerobot/robots/config.py` (`RobotConfig`) |
-| `safety/` | `src/lerobot/robots/utils.py`의 `ensure_safe_goal_position` (HUPHY는 안전 로직이 훨씬 많아 별도 패키지로 분리) |
+| 수신 전용 스레드 | 다리 하나에서는 순차 수거로 충분함. 양다리에서 다시 볼 것 |
+| `codec/private.py` | 파라미터 읽기·쓰기가 필요해지면 ([이슈 #11](issues.md)) |
+| 보행 궤적 | 서 있기가 되고 나서 |
+| 진단 패킷 주기 설정 | 지금은 코드 기본값(10주기). 필요해지면 `robot.yaml` 로 |
 
-### ⚠️ 인코딩 범위는 프로토콜에 따라 다르다
+---
 
-RS02 매뉴얼 기준:
+## 10. 참고
 
-| 프로토콜 | 위치 | 속도 | 토크 | 출처 |
-|---|---|---|---|---|
-| private (29-bit 확장) | ±12.57 rad | ±44 rad/s | ±17 N·m | p.20~21 Communication Type 1 / 2 |
-| **MIT (11-bit 표준)** | ±12.57 rad | **±33 rad/s** | ±17 N·m | p.37~38 Command 3 / Response Command 1 |
-
-HUPHY는 11-bit 표준 프레임을 쓰므로 **MIT 행(±33)이 맞다.**
-
-- 현재 `robot_constant.py`의 hip/knee `vmax = 44.0`은 **private 프로토콜 값**이라 수정
-  대상이다 (속도 읽기가 실제보다 1.33배 크게 나옴). 위치·토크는 영향 없음.
-- LeRobot의 `MotorType.O2: (12.57, 33, 20)`은 속도가 맞고 **토크가 틀렸다.**
-  17 N·m는 매뉴얼 4곳에서 교차 확인된다 — MIT 섹션, private 섹션,
-  p.10 파라미터 `0x2007 limit_torque`(max 17 / 기본 17), p.3 Peak load 17 N·m.
-- 매뉴얼 자체에도 오기재가 있다. p.26 "Read and write a single parameter list"의
-  `limit_torque 0 to 14Nm`은 RS00 값으로 보인다.
-- 과열 임계는 MIT 섹션이 130°C, private 섹션이 135°C로 다르다. 보수적으로 130 채택.
-
-**사양값은 반드시 "어느 프로토콜의 표에서 왔는지"와 함께 기록할 것.**
+| | |
+|---|---|
+| [루트 README](../README.md) | 사용법, 조정할 값, 계층별 설계 근거 |
+| [flow_diagrams.md](flow_diagrams.md) | 호출 관계를 그림으로 |
+| [issues.md](issues.md) | 미해결 항목과 근거 |
+| [monitoring.md](monitoring.md) | 무엇을 왜 보는가 |
+| `src/huphy/*/README.md` | 폴더별 상세 |

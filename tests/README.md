@@ -608,5 +608,4 @@ MIT 프로토콜에는 읽기 전용 명령이 없음. 아무것도 보내지 �
 | `robots/humanoid.py` | 미구현. 양다리를 묶을 때 만듦 |
 | `robstride/codec/private.py` | 미구현. 29-bit 확장 프레임이 필요해지면 |
 
-작성 순서는 [docs/build_from_scratch.md](../docs/build_from_scratch.md) 참조.
-각 단계마다 해당 계층의 테스트를 여기에 추가함.
+계층을 만든 순서와 각 단계의 중점은 [docs/build_log.md](../docs/build_log.md) 참조.
