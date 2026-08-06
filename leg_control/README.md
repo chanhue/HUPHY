@@ -3,8 +3,6 @@
 > ⚠️ **이 폴더는 참조용이다.** 현재 개발은 [`src/huphy/`](../src/huphy/)에서
 > 이루어진다. 여기 코드는 실물 하드웨어 검증 전까지 대조용으로 남겨둔 것이며,
 > 아래에 적힌 알려진 이슈들이 그대로 남아 있다.
->
-> 대응 관계는 [docs/refactor_layering.md](../docs/refactor_layering.md) §8 참고.
 
 기존 프로젝트에서 **다리 제어 부분만** 분리한 자립 패키지. 인버스펜듈럼 쪽
 코드(`commission_motor.py`, `mjlab.*` 등)에 의존하지 않는다.
