@@ -70,11 +70,19 @@ class TestRealFile:
         assert right.motors["knee"].model == "RS02"
         assert right.motors["ankle_a1"].model == "RS00"
 
-    def test_gains_are_zero(self):
-        """미실측이라 0임. 0은 토크 없음이고, 이 상태로는 제어 진입이 막힘 (이슈 #9)."""
+    def test_gains_are_set(self):
+        """튜닝 시작값이 들어 있음. 0이면 토크가 아예 안 나가 재볼 수도 없음 (이슈 #9)."""
         right = load_robot(ROBOT_YAML).limb("right_leg")
-        assert all(m.gains.kp == 0.0 for m in right.motors.values())
-        assert right.is_configured is False
+        assert all(m.gains.kp > 0.0 for m in right.motors.values())
+        assert all(m.gains.kd > 0.0 for m in right.motors.values())
+        assert right.is_configured is True
+
+    def test_left_leg_has_no_gains(self):
+        """한계를 모르는 관절에 게인만 넣으면 어디까지 가도 되는지 모르는 채로
+        토크가 나감."""
+        left = load_robot(ROBOT_YAML).limb("left_leg")
+        assert all(m.gains.kp == 0.0 for m in left.motors.values())
+        assert left.is_configured is False
 
     def test_left_leg_has_no_limits(self):
         """미실측 한계를 둥근 수로 채워 두면 실측한 값처럼 보여서 위험함.
@@ -91,7 +99,7 @@ class TestRealFile:
         assert p.is_file()
 
     def test_limits_are_not_in_calibration(self):
-        """한계는 재는 값이 아니라 적는 값이라 robot.yaml 에 있음 (이슈 #2)."""
+        """한계는 사람이 주석과 함께 관리하는 값이라 robot.yaml 에 있음 (이슈 #2)."""
         import json
 
         p = load_robot(ROBOT_YAML).limb("right_leg").calibration_path

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "limb": "right_leg",
-  "note": "오른다리 실측값. 조립을 재서 얻는 것만 담음 -- sign, offset_deg, zero_reference. 한계와 게인은 재는 값이 아니라 적는 값이라 robot.yaml 에 있음 (이슈 #2). 관절 이름으로 키를 맞춤: CAN id 는 바뀔 수 있지만 관절 자리는 그대로임. sign/offset 은 아직 미실측이라 항등변환이고, 이 상태에서는 cal 공간과 raw 공간이 같은 숫자임.",
+  "note": "오른다리 실측값. 조립을 재서 얻는 것만 담음 -- sign, offset_deg, zero_reference. 관절 이름으로 키를 맞춤: CAN id 는 바뀔 수 있지만 관절 자리는 그대로임. zero_reference 는 commission zero 가 적고, offset_deg 는 commission sweep 이 적음. sign 은 설계가 정한 값이라 1 임. 아직 둘 다 재기 전이라 항등변환이고, 이 상태에서는 cal 공간과 raw 공간이 같은 숫자임. 한계각은 재는 값이지만 사람이 주석과 함께 관리하는 파일이라 robot.yaml 에 있음 (이슈 #2).",
   "motors": {
     "hipz": {
       "sign": 1.0,
