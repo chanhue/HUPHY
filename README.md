@@ -155,7 +155,7 @@ pip install -e ".[dev]"     # + pytest
 ### 확인
 
 ```bash
-python -m pytest tests -q          # 642 passed
+python -m pytest tests -q          # 648 passed
 huphy-commission --help
 ```
 
@@ -228,6 +228,7 @@ huphy-commission --limb right_leg state
 huphy-commission --limb right_leg fault
 huphy-commission --limb right_leg clear-fault [관절]
 
+huphy-commission --limb right_leg sweep          # 가동 범위 측정
 huphy-commission --limb right_leg nudge knee --delta 5
 
 # [영구] --yes 가 있어야 나감
@@ -290,9 +291,13 @@ b  고장 확인       commission fault
 c  위치 확인       commission state               지금 어디 있나
 d  관절 매핑 확인   commission nudge <관절>         관절마다. 눈으로
 e  영점 잡기       commission zero <관절> --yes    관절마다
-f  실측값 채우기    calibration/*.json 을 손으로     sign, offset
-g  게인 튜닝       bringup                        그래프를 보며
+f  가동 범위       commission sweep               손으로 밀어서
+g  실측값 채우기    calibration/*.json 을 손으로     sign, offset
+h  게인 튜닝       bringup                        그래프를 보며
 ```
+
+**f 가 e 뒤인 이유**: `sweep` 이 raw 공간으로 재는데 raw 는 영점에 매달려 있음.
+영점을 다시 잡으면 범위도 다시 재야 함.
 
 **d 가 중요함.** 설정에는 `7=hipz 8=hipx 9=hipy 10=knee 11=ankle_a1 12=ankle_a2`
 로 되어 있지만 실물로 확인된 적이 없음 ([이슈 #8](docs/issues.md)).
@@ -343,7 +348,7 @@ g  게인 튜닝       bringup                        그래프를 보며
 
 | 값 | 언제 고치나 | 지금 |
 |---|---|---|
-| `limits_deg` | 기구 설계가 바뀌면 | 오른다리만 있음. 왼다리는 비어 있음 |
+| `limits_deg` | 기구가 바뀌거나 영점을 다시 잡으면 | 오른다리만 있음. `commission sweep` 으로 잼 |
 | `kp` / `kd` | 튜닝할 때 | **전부 0** |
 | `command_margin_deg` | 게인을 바꾸면 다시 봄 | 3.0 |
 | `max_delta_deg` | 주기를 바꾸면 다시 봄 | 50.0 |
@@ -388,7 +393,7 @@ g  게인 튜닝       bringup                        그래프를 보며
 | **영점 미실측** (`zero_reference` 비어 있음) [#9] | `cal` 이 `raw` 와 같음. 좌표계가 없는 것과 같음 | `commission zero` |
 | **모터 매핑 미확인** [#8] | 명령한 관절이 아닌 것이 움직일 수 있음 | `commission nudge` |
 | **발목 기하 출처 미확인** [#13] | 어느 다리 것인지 모름. 반대쪽은 계산으로 만든 거울상 | 발 각도를 재서 |
-| **왼다리 한계 없음** [#9] | 왼다리는 제어 진입이 막힘 | 도면에서 옮겨 적음 |
+| **왼다리 한계 없음** [#9] | 왼다리는 제어 진입이 막힘 | `commission sweep` |
 | **전제를 코드로 못 읽음** [#11] | `zero_sta` 와 프로토콜을 확인할 방법이 없음 | 외부 도구로 대체 중 |
 
 **전부 실물이 있어야 채워지는 것들임.** 코드로 할 수 있는 것은 다 되어 있고,
@@ -441,7 +446,7 @@ telemetry/        옆에서 관찰. 제어를 방해하지 않음
 canbus.py    ← 여기 하나뿐
 ```
 
-그 위는 `CanFrame` 만 다룸. 그래서 **테스트 642개가 `python-can` 없이 돌아감.**
+그 위는 `CanFrame` 만 다룸. 그래서 **테스트 648개가 `python-can` 없이 돌아감.**
 
 ---
 
@@ -633,7 +638,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-642 passed in 11.0s
+648 passed in 11.0s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**

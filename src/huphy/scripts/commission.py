@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import select
 import sys
 from pathlib import Path
 from typing import Optional
@@ -188,6 +189,72 @@ def cmd_clear_fault(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     return 0
 
 
+def _enter_pressed() -> bool:
+    """Enter 가 눌렸는지. **기다리지 않음.**
+
+    입력을 기다리면 그동안 상태를 못 읽어 최대·최소를 놓침.
+    """
+    if not sys.stdin.isatty():
+        return False
+    ready, _, _ = select.select([sys.stdin], [], [], 0)
+    if not ready:
+        return False
+    sys.stdin.readline()
+    return True
+
+
+def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
+    """토크를 끄고 손으로 미는 동안 가동 범위를 기록함."""
+    ids = [_joint_id(limb, args.joint)] if args.joint else None
+    names = {motor.id: name for name, motor in limb.motors.items()}
+
+    print(
+        f"\n{limb.name} 가동 범위 측정\n\n"
+        f"  토크를 끕니다. 관절을 손으로 **양쪽 끝까지** 천천히 미세요.\n"
+        f"  하드스톱에 닿는 느낌을 확인할 것 -- 끝까지 안 밀면 그만큼 좁게 나옵니다.\n"
+        f"  발목은 발을 잡고 움직이면 두 모터가 같이 따라옵니다.\n\n"
+        f"  끝나면 Enter.\n"
+    )
+
+    lines = [0]
+
+    def show(results, positions):
+        if lines[0]:
+            print(f"\033[{lines[0]}A", end="")
+        out = [f"  {'관절':<10} {'최소':>9} {'지금':>9} {'최대':>9} {'범위':>9}"]
+        for mid, r in results.items():
+            now = positions.get(mid)
+            now_text = f"{now:9.2f}" if now is not None else f"{'--':>9}"
+            out.append(
+                f"  {names[mid]:<10} {r.lo_deg:9.2f} {now_text} "
+                f"{r.hi_deg:9.2f} {r.span_deg:9.2f}"
+            )
+        print("\n".join(out))
+        lines[0] = len(out)
+
+    results = C.sweep(bus, ids, should_stop=lambda: _enter_pressed(), on_update=show)
+
+    print(f"\n  robot.yaml 의 {limb.name}.motors 에 적을 것 (raw 공간):\n")
+    for mid, r in results.items():
+        motor = limb.motors[names[mid]]
+        print(
+            f"      {names[mid]+':':<10} {{id: {motor.id}, model: {motor.model}, "
+            f"limits_deg: [{r.lo_deg:.2f}, {r.hi_deg:.2f}], "
+            f"kp: {motor.gains.kp}, kd: {motor.gains.kd}}}"
+        )
+
+    print(
+        f"\n  한 번 더 돌려 같은 값이 나오는지 확인할 것.\n"
+        f"  영점을 다시 잡으면 이 값도 다시 재야 함 -- raw 는 영점에 매달려 있음."
+    )
+
+    thin = [names[mid] for mid, r in results.items() if r.span_deg < 5.0]
+    if thin:
+        print(f"\n  범위가 5도도 안 되는 관절: {thin}. 끝까지 밀었는지 확인할 것.")
+        return 1
+    return 0
+
+
 def cmd_nudge(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     motor_id = _joint_id(limb, args.joint)
     print(
@@ -277,6 +344,7 @@ def build_parser() -> argparse.ArgumentParser:
             "예시:\n"
             "  --limb right_leg scan\n"
             "  --limb right_leg state\n"
+            "  --limb right_leg sweep\n"
             "  --limb right_leg nudge knee --delta 5\n"
             '  --limb right_leg zero knee --note "다리 편 상태" --yes\n'
         ),
@@ -293,6 +361,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("clear-fault", help="고장 상태 지우기")
     c.add_argument("joint", nargs="?", help="생략하면 전부")
+
+    s = sub.add_parser("sweep", help="토크를 끄고 손으로 밀어 가동 범위 측정")
+    s.add_argument("joint", nargs="?", help="생략하면 전부")
 
     n = sub.add_parser("nudge", help="조금 움직였다 되돌림. 어느 관절인지 확인용")
     n.add_argument("joint")
@@ -327,6 +398,7 @@ HANDLERS = {
     "state": cmd_state,
     "fault": cmd_fault,
     "clear-fault": cmd_clear_fault,
+    "sweep": cmd_sweep,
     "nudge": cmd_nudge,
     "zero": cmd_zero,
     "mode": cmd_mode,

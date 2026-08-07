@@ -29,6 +29,7 @@ python -m huphy.scripts.commission --limb right_leg zero knee --note "다리 편
 | `state` | raw 와 cal 을 나란히. 속도·토크·온도 |
 | `fault` | 고장 상태 조회 |
 | `clear-fault` | 고장 상태 지우기 |
+| `sweep` | 토크를 끄고 손으로 밀어 가동 범위 측정 |
 | `nudge` | 조금 움직였다 되돌림 |
 | `zero` | **[영구]** 지금 자세를 기계 영점으로 |
 | `mode` | 제어 모드 변경 |
@@ -128,6 +129,36 @@ right_leg  can1  모터 6개
 
 같은 값이 두 번 나오면 버그처럼 보이므로 **이유를 밝혀 둠.**
 
+### `sweep` — 가동 범위 측정
+
+```bash
+huphy-commission --limb right_leg sweep          # 전 관절
+huphy-commission --limb right_leg sweep knee     # 하나만
+```
+
+토크를 끄고 **사람이 관절을 양쪽 끝까지 미는 동안** 최대·최소를 기록함. Enter 로
+끝냄.
+
+```
+  관절                최소        지금        최대        범위
+  hipz         -116.55    -21.35    -21.18     95.37
+  knee          -20.61     74.76     74.76     95.37
+```
+
+끝나면 `robot.yaml` 에 붙일 수 있는 형태로 냄.
+
+```
+      knee:      {id: 10, model: RS02, limits_deg: [-20.61, 74.76], kp: 0.0, kd: 0.0}
+```
+
+**파일을 고치지는 않음.** `robot.yaml` 은 사람이 적는 파일이고 주석이 많음 —
+프로그램이 다시 쓰면 주석이 날아감.
+
+발목도 같이 잼. 발을 잡고 움직이면 두 모터가 같이 따라옴.
+
+범위가 5도도 안 되는 관절이 있으면 알려주고 종료 코드 `1` 을 냄 — 끝까지 안 민
+것임.
+
 ### `nudge` — 어느 관절인지 눈으로 확인
 
 이슈 #8(모터 id ↔ 관절 매핑 실물 미확인)을 해소하는 절차임. 설정에는
@@ -197,10 +228,12 @@ can1 (socketcan) 를 열 수 없음: ...
 4  commission state         지금 어디 있나
 5  commission nudge <관절>   설정대로 움직이나 (관절마다)
 6  commission zero <관절>    영점 (자세를 잡아 놓고 하나씩)
-7  bringup                  게인 튜닝. 그래프를 보며
+7  commission sweep         가동 범위. 영점 뒤에 재야 함
+8  bringup                  게인 튜닝. 그래프를 보며
 ```
 
-1~6 이 끝나야 7 이 의미가 있음 — 영점을 안 잡으면 어느 자세가 0도인지 모름.
+**7 이 6 뒤인 이유**: `sweep` 이 raw 공간으로 재는데 raw 는 영점에 매달려 있음.
+영점을 다시 잡으면 범위도 다시 재야 함.
 
 ---
 

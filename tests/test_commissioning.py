@@ -27,6 +27,7 @@ LEG = {
     10: Motor(id=10, model="RS02", limits_deg=(-20.65, 74.79)),
     11: Motor(id=11, model="RS00", limits_deg=(-79.77, 43.16)),
 }
+MODELS_BY_ID = {10: T.Model.RS02, 11: T.Model.RS00}
 
 FAST = {"steps": 2, "hz": 100000.0}
 """테스트에서 nudge 를 기다리지 않기 위한 값. 동작은 같고 간격만 짧음."""
@@ -357,3 +358,59 @@ class TestScan:
         with caplog.at_level("WARNING"):
             C.scan(leg, timeout_s=0.001)
         assert "응답 없는 모터" in caplog.text
+
+
+# ===========================================================================
+# sweep — 가동 범위 측정
+# ===========================================================================
+class TestSweep:
+    def test_records_min_and_max(self, leg, live):
+        """토크를 끄고 사람이 미는 동안 최대·최소를 기록함."""
+        positions = [0.0, 30.0, -20.0, 45.0, 10.0]
+        step = {"i": 0}
+
+        def moving_send(msg):
+            live.sent.append(msg)
+            mid = msg.arbitration_id
+            index = min(step["i"], len(positions) - 1)
+            live.rx.append(state_frame(mid, positions[index], model=MODELS_BY_ID[mid]))
+
+        live.send = moving_send
+
+        def should_stop():
+            step["i"] += 1
+            return step["i"] > len(positions)
+
+        results = C.sweep(leg, [10], should_stop=should_stop, hz=10000.0)
+        assert results[10].lo_deg == pytest.approx(-20.0, abs=0.05)
+        assert results[10].hi_deg == pytest.approx(45.0, abs=0.05)
+        assert results[10].span_deg == pytest.approx(65.0, abs=0.1)
+
+    def test_cuts_torque_first(self, leg, live):
+        """힘이 들어간 채로 밀면 모터와 싸우게 되고 범위가 좁게 나옴."""
+        leg.enable_torque()
+        live.sent.clear()
+        C.sweep(leg, [10], should_stop=lambda: True)
+        assert live.sent[0].data[7] == T.CMD_STOP
+        assert leg.is_torque_on(10) is False
+
+    def test_starts_from_the_current_position(self, leg, live):
+        """시작 위치가 범위 안에 들어가야 함. 안 그러면 첫 값이 빠짐."""
+        results = C.sweep(leg, [10], should_stop=lambda: True)
+        assert results[10].lo_deg == results[10].hi_deg
+        assert results[10].samples == 0
+
+    def test_all_motors_by_default(self, leg, live):
+        """발목은 발을 잡고 움직이면 두 모터가 같이 따라옴. 함께 재야 함."""
+        results = C.sweep(leg, should_stop=lambda: True)
+        assert set(results) == set(leg.motor_ids)
+
+    def test_no_answer_is_rejected(self, leg, raw):
+        """응답이 없으면 잴 것이 없음. 배선부터 확인할 일임."""
+        with pytest.raises(C.CommissioningError, match="배선과 CAN id"):
+            C.sweep(leg, should_stop=lambda: True)
+
+    def test_reports_in_raw_space(self, leg, live):
+        """캘리브레이션 전에도 쓸 수 있어야 하므로 raw 공간임."""
+        results = C.sweep(leg, [10], should_stop=lambda: True)
+        assert results[10].lo_deg == pytest.approx(leg.state(10).position_deg, abs=0.05)

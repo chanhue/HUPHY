@@ -7,7 +7,7 @@ tests/
 ├── test_base.py            motors/base.py              42개
 ├── test_canbus.py          motors/canbus.py            33개
 ├── test_robstride_bus.py   robstride/bus.py            40개
-├── test_commissioning.py   robstride/commissioning.py  33개
+├── test_commissioning.py   robstride/commissioning.py  39개
 ├── test_config.py          config/                     45개
 ├── test_calibration.py     calibration/                35개
 ├── test_commission_cli.py  scripts/commission.py       30개
@@ -25,9 +25,9 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-........................................................................ [ 89%]
-.......................................................................  [100%]
-642 passed in 11.5s
+........................................................................ [ 88%]
+........................................................................ [100%]
+648 passed in 11.1s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -135,6 +135,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestSetProtocol` | 4 | 전원 재투입 경고 |
 | `TestNudge` | 10 | 시작 복귀, 토크 정리, 진폭 상한 |
 | `TestScan` | 4 | 응답자 수집 |
+| `TestSweep` | 6 | 최대·최소 기록, 토크 차단, raw 공간 |
 
 ### `test_config.py` — 45개
 

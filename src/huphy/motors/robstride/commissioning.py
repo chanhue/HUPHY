@@ -36,9 +36,9 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Callable, Dict, Iterable, List, Optional
 
-from ..base import MotorState
+from ..base import MotorState, resolve_motor_list
 from . import tables
 from .bus import MitCommand, PASSIVE, RobStrideBus, _command_frame
 
@@ -267,6 +267,105 @@ def nudge(
     return NudgeResult(
         motor_id=motor_id, start_deg=start, peak_deg=peak, end_deg=end, samples=samples
     )
+
+
+@dataclass
+class SweepResult:
+    """`sweep` 이 관찰한 것. 관절 하나의 가동 범위임."""
+
+    motor_id: int
+    lo_deg: float
+    hi_deg: float
+    samples: int
+
+    @property
+    def span_deg(self) -> float:
+        return self.hi_deg - self.lo_deg
+
+
+def sweep(
+    bus: RobStrideBus,
+    motors: Optional[Iterable[int]] = None,
+    *,
+    should_stop: Callable[[], bool],
+    on_update: Optional[Callable[[Dict[int, "SweepResult"], Dict[int, float]], None]] = None,
+    hz: float = 20.0,
+) -> Dict[int, SweepResult]:
+    """토크를 끄고 **사람이 손으로 미는 동안** 최대·최소를 기록함.
+
+    관절 가동 범위를 재는 유일한 방법임. 설계값이 없거나 실물과 맞는지 확인할 때 씀.
+
+    **토크를 먼저 끊음.** 힘이 들어간 채로 밀면 모터와 싸우게 되고, 손으로 밀 수
+    있는 범위가 실제 가동 범위보다 좁게 나옴.
+
+    `should_stop` 이 `True` 를 낼 때까지 돎. 호출부가 키 입력이나 시간으로 정함.
+
+    반환: 모터 id -> `SweepResult`. 각도는 **raw 공간**임 -- 캘리브레이션 전에도
+    쓸 수 있어야 하기 때문임.
+
+
+    ## 값이 사람 손에 달려 있음
+
+    끝까지 안 밀면 그만큼 좁게 나옴. **하드스톱에 닿는 느낌을 확인하며** 천천히
+    밀 것.
+
+    한 번 더 돌려서 같은 값이 나오는지 보는 것이 확인 방법임.
+
+
+    ## 발목은 발을 움직임
+
+    두 모터가 로드로 발판에 물려 있어 **한쪽만 손으로 돌릴 수 없음.** 발을 잡고
+    움직이면 두 모터가 같이 따라옴 -- 둘 다 토크가 꺼져 있으므로 서로 밀리지 않음.
+
+    그렇게 얻은 두 범위는 각 모터가 **어떤 자세에서든 가질 수 있는 값의 범위**임.
+    두 최대값을 동시에 가지는 자세는 없을 수 있으나, 명령은 IK 가 만든 짝에서
+    시작하므로 문제되지 않음.
+    """
+    ids = resolve_motor_list(motors, bus.motor_ids)
+    bus.disable_torque(ids)
+
+    missing = bus.refresh_states(ids)
+    if set(missing) == set(ids):
+        raise CommissioningError(
+            f"응답이 없음: {missing}. 배선과 CAN id 를 확인할 것"
+        )
+
+    results = {
+        mid: SweepResult(
+            motor_id=mid,
+            lo_deg=bus.state(mid).position_deg,
+            hi_deg=bus.state(mid).position_deg,
+            samples=0,
+        )
+        for mid in ids
+    }
+
+    dt = 1.0 / float(hz)
+    while not should_stop():
+        bus.refresh_states(ids)
+        positions = {}
+        for mid in ids:
+            state = bus.state(mid)
+            if not state.is_valid:
+                continue
+            position = state.position_deg
+            positions[mid] = position
+            entry = results[mid]
+            results[mid] = SweepResult(
+                motor_id=mid,
+                lo_deg=min(entry.lo_deg, position),
+                hi_deg=max(entry.hi_deg, position),
+                samples=entry.samples + 1,
+            )
+        if on_update is not None:
+            on_update(results, positions)
+        time.sleep(dt)
+
+    logger.info(
+        "sweep 끝: %s",
+        ", ".join(f"m{r.motor_id} {r.lo_deg:.2f}~{r.hi_deg:.2f}" for r in results.values()),
+    )
+    return results
 
 
 def scan(bus: RobStrideBus, *, timeout_s: float = 0.1) -> List[int]:
