@@ -27,7 +27,7 @@ limbs:
     side: right
     channel: can1
     motors:
-      knee: {id: 10, model: RS02, limits_deg: [-20.65, 74.79], kp: 30.0, kd: 1.0}
+      knee: {id: 10, model: RS02, kp: 30.0, kd: 1.0}
 """
 
 
@@ -75,7 +75,16 @@ class TestRealFile:
         right = load_robot(ROBOT_YAML).limb("right_leg")
         assert all(m.gains.kp > 0.0 for m in right.motors.values())
         assert all(m.gains.kd > 0.0 for m in right.motors.values())
-        assert right.is_configured is True
+
+    def test_no_limits_in_the_yaml(self):
+        """한계는 재는 값이라 캘리브레이션 파일에 있음 (이슈 #2).
+
+        설정만으로는 is_configured 가 False 임 -- Leg 가 캘리브레이션을 붙이면서
+        채워짐.
+        """
+        right = load_robot(ROBOT_YAML).limb("right_leg")
+        assert all(m.limits_deg is None for m in right.motors.values())
+        assert right.is_configured is False
 
     def test_left_leg_has_no_gains(self):
         """한계를 모르는 관절에 게인만 넣으면 어디까지 가도 되는지 모르는 채로
@@ -84,13 +93,20 @@ class TestRealFile:
         assert all(m.gains.kp == 0.0 for m in left.motors.values())
         assert left.is_configured is False
 
-    def test_left_leg_has_no_limits(self):
-        """미실측 한계를 둥근 수로 채워 두면 실측한 값처럼 보여서 위험함.
+    def test_limits_live_in_the_calibration_file(self):
+        """오른다리는 재 놓았고 왼다리는 아직임. null 은 "제한 없음" 이 아니라
+        "안 잼" 이고, 그 상태에서는 제어 진입이 막힘."""
+        import json
 
-        비워 두면 is_configured 가 False 가 되어 제어 진입 자체가 막힘.
-        """
-        left = load_robot(ROBOT_YAML).limb("left_leg")
-        assert all(m.limits_deg is None for m in left.motors.values())
+        limbs = load_robot(ROBOT_YAML).limbs
+        right = json.loads(
+            limbs["right_leg"].calibration_path.read_text(encoding="utf-8")
+        )
+        left = json.loads(
+            limbs["left_leg"].calibration_path.read_text(encoding="utf-8")
+        )
+        assert all(e["limits_deg"] is not None for e in right["motors"].values())
+        assert all(e["limits_deg"] is None for e in left["motors"].values())
 
     def test_calibration_path_is_absolute(self):
         """실행 위치가 달라져도 같은 파일을 가리켜야 함."""
@@ -98,16 +114,17 @@ class TestRealFile:
         assert p.is_absolute()
         assert p.is_file()
 
-    def test_limits_are_not_in_calibration(self):
-        """한계는 사람이 주석과 함께 관리하는 값이라 robot.yaml 에 있음 (이슈 #2)."""
+    def test_gains_are_not_in_calibration(self):
+        """게인은 같은 모델로 갈면 그대로 쓰는 값이라 robot.yaml 에 있음 (이슈 #2)."""
         import json
 
         p = load_robot(ROBOT_YAML).limb("right_leg").calibration_path
         data = json.loads(p.read_text(encoding="utf-8"))
         for entry in data["motors"].values():
-            assert "limit_lo_deg" not in entry
-            assert "kp" not in entry
-            assert set(entry) == {"sign", "offset_deg", "zero_reference"}
+            assert "kp" not in entry and "kd" not in entry
+            assert set(entry) == {
+                "sign", "offset_deg", "zero_reference", "limits_deg"
+            }
 
 
 # ===========================================================================
@@ -138,7 +155,7 @@ class TestUnknownKeys:
     def test_error_lists_valid_keys(self, write):
         """뭘 쓸 수 있는지 알려줘야 고칠 수 있음."""
         p = write(BASE.replace("kp: 30.0", "kpp: 30.0"))
-        with pytest.raises(ConfigError, match="limits_deg"):
+        with pytest.raises(ConfigError, match=r"가용: \['id', 'kd', 'kp', 'model'\]"):
             load_robot(p)
 
 
@@ -192,15 +209,11 @@ class TestStructure:
 # 값 거부
 # ===========================================================================
 class TestValues:
-    def test_reversed_limits(self, write):
-        """cal 공간에는 sign 이 개입하지 않아 순서가 뒤집히지 않음. lo > hi 는 오타임."""
-        p = write(BASE.replace("[-20.65, 74.79]", "[74.79, -20.65]"))
-        with pytest.raises(ConfigError, match="lo 가 hi 보다"):
-            load_robot(p)
-
-    def test_limits_need_exactly_two(self, write):
-        p = write(BASE.replace("[-20.65, 74.79]", "[1, 2, 3]"))
-        with pytest.raises(ConfigError, match=r"\[최소, 최대\] 두 개"):
+    def test_limits_here_are_refused(self, write):
+        """한계는 재는 값이라 캘리브레이션 파일에 있음. 같은 값이 두 군데 있으면
+        어긋났을 때 어느 쪽이 진짜인지 알 수 없음 (이슈 #2)."""
+        p = write(BASE.replace("kp: 30.0", "limits_deg: [-20.65, 74.79], kp: 30.0"))
+        with pytest.raises(ConfigError, match="limits_deg 는 여기 두지 않음"):
             load_robot(p)
 
     def test_zero_control_hz(self, write):

@@ -12,20 +12,25 @@ calibration/
 
 ## 무엇을 담나
 
-**조립을 재서 얻는 값**만 담음.
+**로봇을 만져서 알아내는 값**만 담음. 프로그램이 쓰는 파일임.
 
 ```
 sign             모터 회전 방향이 관절 양의 방향과 반대면 -1. 설계가 정함
-offset_deg       기계 영점에서 관절 0도까지의 차이. commission sweep 이 잼
-zero_reference   영점을 어느 자세에서 잡았는지 사람이 남기는 메모
+offset_deg       기계 영점에서 관절 0도까지의 차이     <- commission sweep
+limits_deg       하드스톱 위치 (cal 공간)             <- commission sweep
+zero_reference   영점을 어느 자세에서 잡았는지 메모     <- commission zero
 ```
 
 ```
 cal = sign * raw + offset
 ```
 
-한계와 게인은 **적는 값**이라 `robot.yaml` 에 있음 (이슈 #2). 무효화 시점이 다름 —
-모터를 다시 달면 여기 값만 무효가 되고, 기구 설계가 바뀌면 `robot.yaml` 만 바뀜.
+`offset_deg` 와 `limits_deg` 가 **같은 조작에서 같이 나옴.** 기계 영점을 다시 잡으면
+둘 다 무효가 되므로, 한쪽만 갱신되는 상태가 없게 같은 파일에 둠 (이슈 #2).
+
+게인은 실물에서 찾는 값이지만 사람이 주석과 함께 손으로 적으므로 `robot.yaml` 에
+있음. `robot.yaml` 은 주석이 많아 프로그램이 다시 쓰면 주석이 날아감 — 그래서
+프로그램은 이 JSON 만 씀.
 
 ---
 
@@ -45,7 +50,7 @@ calibration/store.py   그걸 파일에서 읽고 쓰는 법        <- 입출력
 ## 관절 이름으로 키를 맞춤
 
 ```json
-"knee": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""}
+"knee": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": "", "limits_deg": null}
 ```
 
 CAN id 는 바뀔 수 있음 (`commissioning.set_can_id`). **관절 자리는 안 바뀜.**
@@ -126,7 +131,8 @@ cal_by_id = attach(load(leg.calibration_path), leg.motors)
 
 | | 왜 |
 |---|---|
-| 모르는 키 | 한계·게인이 여기 남아 있으면 값이 두 군데가 됨 |
+| 모르는 키 | 게인이 여기 남아 있으면 값이 두 군데가 됨 |
+| `limits_deg` 의 `lo >= hi` | cal 공간에는 sign 이 개입하지 않아 뒤집히지 않음. 오타임 |
 | `sign = 0` | 모든 raw 가 같은 cal 로 뭉개져 역변환이 불가능함 |
 | 형식 번호 불일치 | 항목이 조용히 무시됨 |
 | 관절 이름 불일치 (`attach`) | 그 관절만 항등변환으로 돎 |
@@ -149,7 +155,8 @@ by_id = cal.attach(c, leg.motors)
 by_id[10].raw_to_cal(45.0)     # 45.0 (아직 항등)
 
 c["knee"] = MotorCalibration(motor_id=-1, sign=-1.0, offset_deg=12.0,
-                             zero_reference="다리 편 상태, 발바닥 평면 접촉")
+                             zero_reference="다리 편 상태, 발바닥 평면 접촉",
+                             limits_deg=(-20.65, 74.79))
 cal.save(leg.calibration_path, c, limb="right_leg")
 ```
 
@@ -157,10 +164,12 @@ cal.save(leg.calibration_path, c, limb="right_leg")
 
 ## 현재 상태
 
-전부 미실측임. `sign=1, offset=0` 이라 **`cal` 과 `raw` 가 같은 숫자**이고, 어느
-쪽으로 해석해도 동작이 같아서 두 공간을 섞어 써도 드러나지 않음 (이슈 #2).
+`offset=0` 이라 **`cal` 과 `raw` 가 같은 숫자**이고, 어느 쪽으로 해석해도 동작이
+같아서 두 공간을 섞어 써도 드러나지 않음. `sweep` 이 `offset_deg` 를 넣는 순간
+갈라짐 (이슈 #2).
 
-`zero_reference` 가 전부 비어 있음 (이슈 #9).
+`limits_deg` 는 오른다리만 채워져 있고 왼다리는 전부 `null` 임. `zero_reference` 는
+양쪽 다 비어 있음 — 아직 실물에서 `commission zero` 를 돌리지 않음.
 
 ---
 

@@ -33,8 +33,8 @@ limbs:
     channel: can1
     calibration: calibration/right_leg.json
     motors:
-      knee:     {id: 10, model: RS02, limits_deg: [-20.65, 74.79]}
-      ankle_a1: {id: 11, model: RS00, limits_deg: [-79.77, 43.16]}
+      knee:     {id: 10, model: RS02}
+      ankle_a1: {id: 11, model: RS00}
   left_leg:
     kind: leg
     side: left
@@ -44,12 +44,14 @@ limbs:
 """
 
 CALIBRATION = {
-    "schema_version": 1,
+    "schema_version": 2,
     "limb": "right_leg",
     "note": "",
     "motors": {
-        "knee": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
-        "ankle_a1": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": ""},
+        "knee": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": "",
+                 "limits_deg": [-20.65, 74.79]},
+        "ankle_a1": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": "",
+                     "limits_deg": [-79.77, 43.16]},
     },
 }
 

@@ -257,7 +257,7 @@ graph TD
     RC --> S[SafetyConfig]
     RC --> T[TelemetryConfig]
     RC --> LC[LimbConfig]
-    LC --> MO["Motor  id, model, limits_deg, gains"]
+    LC --> MO["Motor  id, model, gains"]
 
     CL --> MC["MotorCalibration  sign, offset, zero_reference"]
 
@@ -276,8 +276,9 @@ graph TD
 **제어 경로는 읽기만 함.** 쓰기는 커미셔닝에서만 일어남 — 제어 중에 실측값이
 바뀌면 좌표계가 도중에 옮겨감.
 
-두 파일을 나눈 이유: 무릎 모터를 갈면 `sign`/`offset` 은 다시 재야 하지만
-`limits_deg` 는 그대로임. 한 파일에 두면 **한쪽을 고칠 때 다른 쪽을 덮어씀.**
+두 파일을 나눈 이유: `robot.yaml` 은 주석이 많아 **프로그램이 다시 쓰면 주석이
+날아감.** 그래서 프로그램은 JSON 만 씀. 사람이 손으로 적는 값(id, model, 게인)만
+`robot.yaml` 에 있음.
 
 ---
 

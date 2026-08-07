@@ -28,19 +28,41 @@ MODELS = {7: T.Model.RS02, 8: T.Model.RS02, 9: T.Model.RS02,
           10: T.Model.RS02, 11: T.Model.RS00, 12: T.Model.RS00}
 
 
+LIMITS = {
+    "hipz": (-117.07, -21.07),
+    "hipx": (-5.51, 79.64),
+    "hipy": (-41.90, 31.09),
+    "knee": (-20.65, 74.79),
+    "ankle_a1": (-79.77, 43.16),
+    "ankle_a2": (-12.50, 126.66),
+}
+"""한계각은 캘리브레이션에서 옴. `robot.yaml` 에는 없음 (이슈 #2)."""
+
+
 def leg_config(**over):
     gains = Gains(kp=30.0, kd=1.0)
     motors = {
-        "hipz": Motor(id=7, model="RS02", limits_deg=(-117.07, -21.07), gains=gains),
-        "hipx": Motor(id=8, model="RS02", limits_deg=(-5.51, 79.64), gains=gains),
-        "hipy": Motor(id=9, model="RS02", limits_deg=(-41.90, 31.09), gains=gains),
-        "knee": Motor(id=10, model="RS02", limits_deg=(-20.65, 74.79), gains=gains),
-        "ankle_a1": Motor(id=11, model="RS00", limits_deg=(-79.77, 43.16), gains=gains),
-        "ankle_a2": Motor(id=12, model="RS00", limits_deg=(-12.50, 126.66), gains=gains),
+        "hipz": Motor(id=7, model="RS02", gains=gains),
+        "hipx": Motor(id=8, model="RS02", gains=gains),
+        "hipy": Motor(id=9, model="RS02", gains=gains),
+        "knee": Motor(id=10, model="RS02", gains=gains),
+        "ankle_a1": Motor(id=11, model="RS00", gains=gains),
+        "ankle_a2": Motor(id=12, model="RS00", gains=gains),
     }
     motors.update(over.pop("motors", {}))
     return LimbConfig(name="right_leg", kind="leg", side="right", channel="can1",
                       motors=motors, **over)
+
+
+def measured(joints=None, **over):
+    """한계각이 채워진 캘리브레이션. 재고 난 뒤의 상태임."""
+    names = list(joints) if joints is not None else list(LIMITS)
+    out = {
+        name: MotorCalibration(motor_id=-1, limits_deg=LIMITS.get(name))
+        for name in names
+    }
+    out.update(over)
+    return out
 
 
 # ===========================================================================
@@ -105,7 +127,7 @@ def fake_can(monkeypatch):
 def build(config=None, **kwargs):
     cfg = config if config is not None else leg_config()
     bus = RobStrideBus(CanBus(cfg.channel), cfg.motors_by_id())
-    kwargs.setdefault("calibration", identity(cfg.motors))
+    kwargs.setdefault("calibration", measured(cfg.motors))
     kwargs.setdefault("allow_uncalibrated", True)
     leg = Leg(cfg, bus, **kwargs)
     leg.connect()
@@ -181,8 +203,9 @@ class TestCoordinates:
 
     def test_mirrored_sign(self, fake_can):
         """sign 이 -1 이면 같은 물리 자세가 반대 부호의 raw 를 냄."""
-        cal = dict(identity(leg_config().motors))
-        cal["knee"] = MotorCalibration(motor_id=-1, sign=-1.0)
+        cal = measured(
+            knee=MotorCalibration(motor_id=-1, sign=-1.0, limits_deg=LIMITS["knee"])
+        )
         leg = build(calibration=cal)
         assert leg.raw_to_cal("knee", -45.0) == pytest.approx(45.0)
 
@@ -265,8 +288,9 @@ class TestSafety:
         점프 가드를 크게 열어 한계만 보이게 함 -- 둘 다 걸리면 어느 쪽이 잘랐는지
         구분되지 않음.
         """
-        cal = dict(identity(leg_config().motors))
-        cal["knee"] = MotorCalibration(motor_id=-1, sign=-1.0)
+        cal = measured(
+            knee=MotorCalibration(motor_id=-1, sign=-1.0, limits_deg=LIMITS["knee"])
+        )
         leg = build(calibration=cal, safety=SafetyConfig(max_delta_deg=1000.0))
         commands = leg.build_commands({"knee": 200.0})       # 한계 74.79
         assert leg.last_sent["knee"] == pytest.approx(74.79 - 3.0)   # 여유 3도
@@ -375,8 +399,9 @@ class TestCalibration:
 
     def test_needs_both_config_and_measurement(self, fake_can):
         """게인만 있으면 어디까지 가도 되는지 모르고, 한계만 있으면 토크가 안 나감."""
-        cal = {j: MotorCalibration(motor_id=-1, zero_reference="편 상태")
-               for j in leg_config().motors}
+        cal = measured()
+        for entry in cal.values():
+            entry.zero_reference = "편 상태"
         assert build(calibration=cal).is_calibrated is True
 
     def test_enable_refuses_when_uncalibrated(self, fake_can):

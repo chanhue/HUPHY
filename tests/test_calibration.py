@@ -102,16 +102,30 @@ class TestLoadRejects:
 
     def test_error_says_what_is_expected(self, write):
         """무엇을 기대하는지 알려줘야 고칠 수 있음."""
-        with pytest.raises(CalibrationError, match="이 코드는 1 을 읽음"):
+        with pytest.raises(CalibrationError, match=f"이 코드는 {SCHEMA_VERSION} 을 읽음"):
             cal.load(write(payload(schema_version=99)))
 
-    def test_limits_key_is_rejected(self, write):
-        """한계는 적는 값이라 robot.yaml 에 있음 (이슈 #2).
+    def test_limits_are_read(self, write):
+        """한계는 재는 값이라 여기 있음. commission sweep 이 적음 (이슈 #2)."""
+        p = write(payload(motors={"knee": {"limits_deg": [-20.65, 74.79]}}))
+        assert cal.load(p)["knee"].limits_deg == (-20.65, 74.79)
 
-        여기 남아 있으면 값이 두 군데가 되어 한쪽만 고쳐질 수 있음.
-        """
-        p = write(payload(motors={"knee": {"sign": 1.0, "limit_lo_deg": -20.0}}))
-        with pytest.raises(CalibrationError, match=r"모르는 키 \['limit_lo_deg'\]"):
+    def test_missing_limits_mean_unmeasured(self, write):
+        """`null` 은 "제한 없음" 이 아니라 "아직 안 잼" 임. 값이 없으면
+        Motor.is_configured 가 False 라 제어 진입이 막힘."""
+        p = write(payload(motors={"knee": {"limits_deg": None}}))
+        assert cal.load(p)["knee"].limits_deg is None
+        assert cal.load(write(payload(motors={"knee": {}})))["knee"].limits_deg is None
+
+    def test_reversed_limits_are_rejected(self, write):
+        """cal 공간에는 sign 이 개입하지 않아 순서가 뒤집히지 않음. lo > hi 는 오타임."""
+        p = write(payload(motors={"knee": {"limits_deg": [74.79, -20.65]}}))
+        with pytest.raises(CalibrationError, match="lo 가 hi 보다"):
+            cal.load(p)
+
+    def test_limits_need_exactly_two(self, write):
+        p = write(payload(motors={"knee": {"limits_deg": [1, 2, 3]}}))
+        with pytest.raises(CalibrationError, match=r"\[최소, 최대\] 두 개"):
             cal.load(p)
 
     def test_gain_key_is_rejected(self, write):
@@ -170,7 +184,7 @@ class TestSave:
         p = tmp_path / "cal.json"
         cal.save(p, {"knee": MotorCalibration(motor_id=10)})
         entry = json.loads(p.read_text(encoding="utf-8"))["motors"]["knee"]
-        assert set(entry) == {"sign", "offset_deg", "zero_reference"}
+        assert set(entry) == {"sign", "offset_deg", "zero_reference", "limits_deg"}
 
     def test_writes_current_schema_version(self, tmp_path):
         p = tmp_path / "cal.json"

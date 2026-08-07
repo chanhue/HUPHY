@@ -8,8 +8,8 @@ tests/
 ├── test_canbus.py          motors/canbus.py            33개
 ├── test_robstride_bus.py   robstride/bus.py            40개
 ├── test_commissioning.py   robstride/commissioning.py  45개
-├── test_config.py          config/                     45개
-├── test_calibration.py     calibration/                35개
+├── test_config.py          config/                     46개
+├── test_calibration.py     calibration/                38개
 ├── test_commission_cli.py  scripts/commission.py       52개
 ├── test_ankle.py           kinematics/ankle.py        149개
 ├── test_leg.py             robots/leg.py               42개
@@ -28,7 +28,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-703 passed in 11.5s
+707 passed in 11.5s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -139,24 +139,24 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestSweep` | 8 | 최대·최소 기록, 토크 차단, 오프셋 반영 |
 | `TestMeasureOffset` | 4 | 지금 자세가 0도, 토크 차단, 무응답 거부 |
 
-### `test_config.py` — 45개
+### `test_config.py` — 46개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
-| `TestRealFile` | 8 | 실제 `config/robot.yaml` |
+| `TestRealFile` | 10 | 실제 `config/robot.yaml`, 한계가 어느 파일에 있나 |
 | `TestUnknownKeys` | 5 | 오타 거부 |
 | `TestStructure` | 8 | 필수 항목 누락 |
-| `TestValues` | 6 | 한계 순서·개수, 0 이하 값 |
+| `TestValues` | 5 | `limits_deg` 거부, 0 이하 값 |
 | `TestIdCollision` | 4 | 채널 안·채널 넘어 |
 | `TestDefaults` | 6 | 빠진 절이 기본값을 쓰는지 |
 | `TestSchema` | 8 | frozen, 조회 도우미 |
 
-### `test_calibration.py` — 35개
+### `test_calibration.py` — 38개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
 | `TestRealFiles` | 6 | 실제 두 파일, `robot.yaml` 과 대조 |
-| `TestLoadRejects` | 11 | 형식 번호, 한계·게인 키 잔존, `sign=0` |
+| `TestLoadRejects` | 14 | 형식 번호, 한계 순서·개수, 게인 키 잔존, `sign=0` |
 | `TestSave` | 7 | 왕복, 크래시 후 원본 생존 |
 | `TestAttach` | 6 | 모터 id 재키잉, 관절 이름 불일치 |
 | `TestUnmeasured` | 5 | 메모 기준 판정 |

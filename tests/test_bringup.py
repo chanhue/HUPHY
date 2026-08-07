@@ -34,12 +34,12 @@ limbs:
     control_hz: 200.0
     calibration: calibration/right_leg.json
     motors:
-      hipz:     {id: 7,  model: RS02, limits_deg: [-117.07, -21.07], kp: 30.0, kd: 1.0}
-      hipx:     {id: 8,  model: RS02, limits_deg: [-5.51, 79.64],    kp: 30.0, kd: 1.0}
-      hipy:     {id: 9,  model: RS02, limits_deg: [-41.90, 31.09],   kp: 30.0, kd: 1.0}
-      knee:     {id: 10, model: RS02, limits_deg: [-20.65, 74.79],   kp: 30.0, kd: 1.0}
-      ankle_a1: {id: 11, model: RS00, limits_deg: [-79.77, 43.16],   kp: 30.0, kd: 1.0}
-      ankle_a2: {id: 12, model: RS00, limits_deg: [-12.50, 126.66],  kp: 30.0, kd: 1.0}
+      hipz:     {id: 7,  model: RS02, kp: 30.0, kd: 1.0}
+      hipx:     {id: 8,  model: RS02, kp: 30.0, kd: 1.0}
+      hipy:     {id: 9,  model: RS02, kp: 30.0, kd: 1.0}
+      knee:     {id: 10, model: RS02, kp: 30.0, kd: 1.0}
+      ankle_a1: {id: 11, model: RS00, kp: 30.0, kd: 1.0}
+      ankle_a2: {id: 12, model: RS00, kp: 30.0, kd: 1.0}
   left_leg:
     kind: leg
     side: left
@@ -53,13 +53,28 @@ limbs:
       ankle_a2: {id: 6, model: RS00}
 """
 
+LIMITS = {
+    "hipz": [-117.07, -21.07],
+    "hipx": [-5.51, 79.64],
+    "hipy": [-41.90, 31.09],
+    "knee": [-20.65, 74.79],
+    "ankle_a1": [-79.77, 43.16],
+    "ankle_a2": [-12.50, 126.66],
+}
+"""한계각은 캘리브레이션에서 옴. `robot.yaml` 에는 없음 (이슈 #2)."""
+
 CALIBRATION = {
-    "schema_version": 1,
+    "schema_version": 2,
     "limb": "right_leg",
     "note": "",
     "motors": {
-        name: {"sign": 1.0, "offset_deg": 0.0, "zero_reference": "편 상태"}
-        for name in ("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2")
+        name: {
+            "sign": 1.0,
+            "offset_deg": 0.0,
+            "zero_reference": "편 상태",
+            "limits_deg": limits,
+        }
+        for name, limits in LIMITS.items()
     },
 }
 

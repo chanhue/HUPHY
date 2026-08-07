@@ -19,27 +19,29 @@ config/
 **도면 보고 적는 숫자** — 로봇을 만지지 않아도 앎.
 
 ```
-무릎은 -20.65도 부터 74.79도 까지 움직인다
 무릎 모터는 CAN id 10 번이고 RS02 다
+오른다리는 can1 에 붙어 있다
 ```
 
 **만져서 알아내는 숫자** — 실제로 조립하고 재봐야 앎.
 
 ```
-이 모터는 반대로 돈다        -> sign = -1
-영점이 12도 어긋나 있다      -> offset = 12
+이 모터는 반대로 돈다             -> sign = -1
+여기가 관절 0도다                -> offset_deg
+여기부터 여기까지 돈다            -> limits_deg
+영점을 다리 편 자세에서 잡았다     -> zero_reference
 ```
 
-무릎 모터를 새 걸로 갈았다고 하면, 다시 재야 하는 것과 그대로인 것이 갈림.
-
-| | 모터를 갈면 |
+| | 어디서 오나 |
 |---|---|
-| `sign`, `offset`, `zero_reference` | **다시 재야 함** |
-| `limits_deg` | 그대로. 무릎 뼈대는 안 바꿨고 하드스톱은 쇳덩어리임 |
-| `kp`, `kd` | 그대로. 같은 모델이면 그대로 씀 |
+| `sign` | 설계. 쓰는 코드가 없음 |
+| `offset_deg`, `limits_deg` | `commission sweep` |
+| `zero_reference` | `commission zero` |
+| `kp`, `kd` | 사람이 튜닝하며 손으로 적음 |
 
 **한 파일에 두면 한쪽을 고칠 때 다른 쪽을 덮어씀.** 캘리브레이션 절차는 파일을
-통째로 새로 쓰는데, 그때 안 바뀌어야 할 값까지 같이 날아감.
+통째로 새로 쓰는데, `robot.yaml` 은 주석이 많아서 프로그램이 다시 쓰면 주석이
+전부 날아감. 그래서 프로그램은 JSON 만 씀.
 
 ### 어느 파일인지 고르는 법
 
@@ -51,6 +53,9 @@ config/
 도면 보고 적었다        ->  robot.yaml
 로봇을 만져서 알아냈다   ->  calibration/*.json
 ```
+
+게인만 예외임. 실물에서 찾는 값이지만 **사람이 주석과 함께 손으로 적는 값**이라
+`robot.yaml` 에 둠. 프로그램이 쓰지 않음.
 
 ### 벤더 사양은 여기 없음
 
@@ -73,7 +78,7 @@ limbs:
     control_hz: 100.0
     calibration: calibration/right_leg.json
     motors:
-      knee: {id: 10, model: RS02, limits_deg: [-20.65, 74.79], kp: 20.0, kd: 1.0}
+      knee: {id: 10, model: RS02, kp: 20.0, kd: 1.0}
 ```
 
 **이름·종류·기하를 나눠 둠.** 하나가 셋을 겸하면 팔이 붙거나 허리처럼 좌우가 없는
@@ -93,14 +98,11 @@ limbs:
 |---|---|
 | `id` | CAN id. 한 채널 안에서 유일해야 함 |
 | `model` | `RS02` 또는 `RS00`. 토크 범위가 다름 (17 vs 14 N·m) |
-| `limits_deg` | 하드스톱 위치, **cal 공간** |
 | `kp`, `kd` | MIT 모드에서 매 프레임 실려 나가는 게인 |
 
-`limits_deg` 는 여유를 뺀 값이 아니라 **하드스톱 자체**임. `safety.command_margin_deg`
-를 여기서 빼서 명령 구간이 나옴.
-
-각도는 전부 cal 공간임 — 관절 각도이지 모터가 보고하는 raw 값이 아님.
-[motors/README.md](../src/huphy/motors/README.md) 의 "raw 와 cal" 참조.
+**한계각은 여기 없음.** `calibration/*.json` 의 `limits_deg` 임 — `commission sweep`
+이 재서 적음. 여기 적으면 거부함: 같은 값이 두 군데 있으면 어긋났을 때 어느 쪽이
+진짜인지 알 수 없음 (이슈 #2).
 
 ### `kp` / `kd` 는 튜닝 시작값임
 
@@ -122,7 +124,7 @@ limbs:
 그리고 잠금장치를 겸함 — `Motor.is_configured` 가 `kp > 0` 을 보므로, 0이면 제어
 진입 자체가 막힘. 왼다리가 그 상태임.
 
-### 왼다리의 `limits_deg` 가 비어 있는 이유
+### 왼다리의 `limits_deg` 가 `null` 인 이유
 
 아직 연결되지 않았고 한계도 실측 전임.
 

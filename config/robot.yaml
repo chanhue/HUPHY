@@ -1,10 +1,14 @@
 # 로봇 구성 — 사람이 적는 것.
 #
-# 여기 있는 값은 배선·기구 설계·튜닝에서 옴. 조립을 재서 얻는 값(sign, offset_deg,
-# zero_reference)은 calibration/*.json 에 있음. 프로그램이 쓰는 파일과 사람이 쓰는
-# 파일을 나눈 것임 -- 이 파일은 주석이 많아서 프로그램이 다시 쓰면 날아감.
+# 여기 있는 값은 배선과 튜닝에서 옴. 로봇을 만져서 알아내는 값(sign, offset_deg,
+# zero_reference, limits_deg)은 calibration/*.json 에 있음.
 #
-# commission sweep 은 limits_deg 를 화면에 내주기만 하고 여기 적지는 않음.
+# 가르는 기준은 "이 숫자를 어디서 얻었나" 임. 모터를 갈면 다시 재야 하는 값과
+# 그대로인 값이 갈리는데, 한 파일에 두면 캘리브레이션 절차가 파일을 새로 쓸 때
+# 안 바뀌어야 할 값까지 같이 날아감.
+#
+# limits_deg 를 여기 적으면 거부함. 같은 값이 두 군데 생기면 어긋났을 때 어느
+# 쪽이 진짜인지 알 수 없음 (이슈 #2).
 #
 # 벤더 사양(인코딩 범위, 명령 바이트)은 src/huphy/motors/robstride/tables.py 에 있음.
 #
@@ -35,25 +39,18 @@ limbs:
     control_hz: 100.0
     calibration: calibration/right_leg.json
 
-    # limits_deg 는 하드스톱 위치임. 여유를 뺀 값이 아니라 하드스톱 자체이고,
-    # safety.command_margin_deg 를 여기서 빼서 명령 구간이 나옴.
-    #
-    # commission sweep 이 재서 내는 값임. 토크를 끄고 관절을 손으로 양쪽 끝까지
-    # 밀며 기록함. 발목은 발을 잡고 움직이면 두 모터가 같이 따라오므로 한 번에
-    # 둘 다 나옴.
-    #
-    # 관절 좌표계 값임 -- sweep 이 관절 0도를 먼저 정하고 그 기준으로 재기 때문에,
-    # 기계 영점(commission zero)을 다시 잡으면 여기 값도 다시 재야 함 (이슈 #2).
+    # 한계각은 여기 없음. calibration/right_leg.json 의 limits_deg 임 --
+    # commission sweep 이 재서 적음.
     #
     # kp/kd 는 아직 실물에서 튜닝하기 전의 시작값임. 여기서부터 올리거나 내림.
     # 처음 만질 때는 huphy-bringup --gain-scale 0.1 로 더 낮춰 시작할 것 (이슈 #9).
     motors:
-      hipz:     {id: 7,  model: RS02, limits_deg: [-117.07,  -21.07], kp: 20.0, kd: 1.0}
-      hipx:     {id: 8,  model: RS02, limits_deg: [  -5.51,   79.64], kp: 20.0, kd: 1.0}
-      hipy:     {id: 9,  model: RS02, limits_deg: [ -41.90,   31.09], kp: 20.0, kd: 1.0}
-      knee:     {id: 10, model: RS02, limits_deg: [ -20.65,   74.79], kp: 20.0, kd: 1.0}
-      ankle_a1: {id: 11, model: RS00, limits_deg: [ -79.77,   43.16], kp: 20.0, kd: 1.0}
-      ankle_a2: {id: 12, model: RS00, limits_deg: [ -12.50,  126.66], kp: 20.0, kd: 1.0}
+      hipz:     {id: 7,  model: RS02, kp: 20.0, kd: 1.0}
+      hipx:     {id: 8,  model: RS02, kp: 20.0, kd: 1.0}
+      hipy:     {id: 9,  model: RS02, kp: 20.0, kd: 1.0}
+      knee:     {id: 10, model: RS02, kp: 20.0, kd: 1.0}
+      ankle_a1: {id: 11, model: RS00, kp: 20.0, kd: 1.0}
+      ankle_a2: {id: 12, model: RS00, kp: 20.0, kd: 1.0}
 
   left_leg:
     kind: leg
@@ -63,9 +60,9 @@ limbs:
     control_hz: 100.0
     calibration: calibration/left_leg.json
 
-    # 아직 연결되지 않았고 한계도 재기 전임. limits_deg 를 비워 두면
-    # Motor.is_configured 가 False 가 되어 제어 진입이 막힘 -- 값이 없는 것과
-    # "제한 없음" 은 다름. 둥근 수를 넣어 두면 잰 값처럼 보여서 위험함.
+    # 아직 연결되지 않았고 한계도 재기 전임 (calibration/left_leg.json 의
+    # limits_deg 가 전부 null). 값이 없는 것과 "제한 없음" 은 다름 -- null 이면
+    # Motor.is_configured 가 False 가 되어 제어 진입이 막힘.
     #
     # kp/kd 도 비워 둠. 한계를 모르는 관절에 게인만 넣으면 어디까지 가도 되는지
     # 모르는 채로 토크가 나감.

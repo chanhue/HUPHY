@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import replace
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .. import calibration as calib
@@ -126,8 +127,21 @@ class Leg(Robot):
 
     # ---- 구성 -------------------------------------------------------------
     def _set_calibration(self, calibration: Mapping[str, MotorCalibration]) -> None:
+        """실측값을 붙임. **한계각도 여기서 들어옴.**
+
+        `robot.yaml` 에는 한계가 없음 -- 재는 값이라 캘리브레이션 파일에 있음
+        (이슈 #2). 가드는 `Motor.limits_deg` 를 보므로, 읽어 온 값을 설정 사본에
+        옮겨 넣어 한 군데서만 보게 함.
+        """
         self.calibration = dict(calibration)
         self._by_id = calib.attach(self.calibration, self.config.motors)
+        self.config = replace(
+            self.config,
+            motors={
+                name: replace(motor, limits_deg=self.calibration[name].limits_deg)
+                for name, motor in self.config.motors.items()
+            },
+        )
 
     def _motor_id(self, motor_name: str) -> int:
         return self.config.motors[motor_name].id

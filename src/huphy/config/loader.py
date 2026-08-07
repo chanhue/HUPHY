@@ -32,7 +32,7 @@ ROBOT_KEYS = {"name", "limbs", "safety", "telemetry"}
 LIMB_KEYS = {
     "kind", "side", "channel", "interface", "control_hz", "calibration", "motors",
 }
-MOTOR_KEYS = {"id", "model", "limits_deg", "kp", "kd"}
+MOTOR_KEYS = {"id", "model", "kp", "kd"}
 SAFETY_KEYS = {"command_margin_deg", "max_delta_deg", "enforce_limits"}
 TELEMETRY_KEYS = {"host", "port", "csv_path", "csv_flush_every"}
 
@@ -55,33 +55,26 @@ def _pick(data: Mapping[str, Any], keys: Iterable[str]) -> Dict[str, Any]:
     return {k: data[k] for k in keys if k in data}
 
 
-def _limits(where: str, raw: Any) -> Optional[tuple]:
-    if raw is None:
-        return None
-    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
-        raise ConfigError(
-            f"{where}: limits_deg 는 [최소, 최대] 두 개여야 함 (받은 값 {raw!r})"
-        )
-    return (float(raw[0]), float(raw[1]))
-
-
 def _motor(where: str, joint: str, data: Mapping[str, Any]) -> Motor:
     if not isinstance(data, Mapping):
         raise ConfigError(f"{where}.{joint}: 항목이 사전이어야 함 (받은 값 {data!r})")
+    if "limits_deg" in data:
+        # 한계는 재는 값이라 캘리브레이션 파일에 있음. 여기에 두면 같은 값이 두
+        # 군데 생기고, 어긋났을 때 어느 쪽이 진짜인지 알 수 없음 (이슈 #2).
+        raise ConfigError(
+            f"{where}.{joint}: limits_deg 는 여기 두지 않음. "
+            f"캘리브레이션 파일에 있음 -- commission sweep 이 재서 적음"
+        )
     _check_keys(f"{where}.{joint}", data, MOTOR_KEYS)
 
     for required in ("id", "model"):
         if required not in data:
             raise ConfigError(f"{where}.{joint}: {required} 항목이 없음")
 
-    # _limits 는 자기 위치를 이미 붙이므로 try 밖에서 부름. 안에서 부르면 아래
-    # 핸들러가 같은 위치를 한 번 더 붙임.
-    limits = _limits(f"{where}.{joint}", data.get("limits_deg"))
     try:
         return Motor(
             id=int(data["id"]),
             model=str(data["model"]),
-            limits_deg=limits,
             gains=Gains(kp=float(data.get("kp", 0.0)), kd=float(data.get("kd", 0.0))),
         )
     except (TypeError, ValueError) as e:

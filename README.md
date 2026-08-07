@@ -303,17 +303,16 @@ huphy-commission --limb right_leg zero --yes     # 관절마다 Enter, 하나씩
 # d  0도와 가동 범위 — 전부 영점 잡은 뒤. 관절마다 두 번 Enter
 huphy-commission --limb right_leg sweep
 
-# e  결과를 config/robot.yaml 의 limits_deg 에 붙임
-
-# f  게인 튜닝 — 한 관절씩 골라 가며
+# e  게인 튜닝 — 한 관절씩 골라 가며
 huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
 
-# g  다리 전체가 버티는지
+# f  다리 전체가 버티는지
 huphy-test --limb right_leg zero
 huphy-test --limb right_leg range
 ```
 
-b·c 는 관절을 생략했음. 목록이 뜨고 골라서 진행함. 관절과 옵션을 다 적어 한 줄로
+b·c·d 의 결과는 `config/calibration/right_leg.json` 에 바로 적힘. 붙여 넣을 것이
+없음. b·c 는 관절을 생략했음 — 목록이 뜨고 골라서 진행함. 관절과 옵션을 다 적어 한 줄로
 치는 형태는 [6번](#6-명령어-목록)에 있음.
 
 ### b 는 모터를 바꾸거나 왼다리를 붙일 때
@@ -658,7 +657,6 @@ huphy-test --limb right_leg range --period 10 --margin 8  # 최소~최대 왕복
 
 | 값 | 언제 고치나 | 지금 |
 |---|---|---|
-| `limits_deg` | 기구가 바뀌거나 영점을 다시 잡으면 | 오른다리만 있음. `commission sweep` 으로 잼 |
 | `kp` / `kd` | 튜닝할 때 | 오른다리 20 / 1 (튜닝 전 시작값) |
 | `command_margin_deg` | 게인을 바꾸면 다시 봄 | 3.0 |
 | `max_delta_deg` | 주기를 바꾸면 다시 봄 | 50.0 |
@@ -673,13 +671,16 @@ huphy-test --limb right_leg range --period 10 --margin 8  # 최소~최대 왕복
 아무 힘이 안 나가고, `Motor.is_configured` 가 `False` 라 제어 진입 자체가 막힘.
 한계를 모르는 관절에 게인만 넣으면 어디까지 가도 되는지 모르는 채로 토크가 나감.
 
-### `config/calibration/*.json` — 조립을 재서 얻는 것
+### `config/calibration/*.json` — 로봇을 만져서 알아내는 것
 
-| 값 | 언제 고치나 | 지금 |
+**프로그램이 씀.** 손으로 고칠 일이 없음.
+
+| 값 | 누가 적나 | 지금 |
 |---|---|---|
-| `sign` | 모터를 다시 달면 | 전부 1.0 (미실측) |
-| `offset_deg` | 영점을 다시 잡으면 | 전부 0.0 (미실측) |
-| `zero_reference` | 영점을 잡을 때 | 전부 비어 있음 |
+| `limits_deg` | `commission sweep` | 오른다리만 있음 |
+| `offset_deg` | `commission sweep` | 전부 0.0 (재기 전) |
+| `zero_reference` | `commission zero` | 전부 비어 있음 |
+| `sign` | 설계. 쓰는 코드가 없음 | 전부 1.0 |
 
 **두 파일을 나눈 이유** — 숫자에 두 종류가 있음.
 
@@ -688,9 +689,12 @@ huphy-test --limb right_leg range --period 10 --margin 8  # 최소~최대 왕복
 로봇을 만져서 알아낸다   ->  calibration/*.json
 ```
 
-무릎 모터를 갈면 `sign`/`offset` 은 다시 재야 하지만 `limits_deg` 는 그대로임 —
-무릎 뼈대는 안 바꿨고 하드스톱은 쇳덩어리임. 한 파일에 두면 **한쪽을 고칠 때 다른
-쪽을 덮어씀.**
+`robot.yaml` 은 주석이 많아서 **프로그램이 다시 쓰면 주석이 전부 날아감.** 그래서
+프로그램은 JSON 만 씀. `limits_deg` 를 `robot.yaml` 에 적으면 거부함 — 같은 값이
+두 군데 있으면 어긋났을 때 어느 쪽이 진짜인지 알 수 없음.
+
+게인만 예외임. 실물에서 찾는 값이지만 사람이 주석과 함께 손으로 적는 값이라
+`robot.yaml` 에 둠.
 
 자세한 것은 [`config/README.md`](config/README.md).
 

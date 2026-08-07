@@ -157,11 +157,12 @@ class MotorState:
 
 @dataclass
 class MotorCalibration:
-    """조립을 실측해서 얻는 값. 코드가 아니라 데이터이며 JSON으로 저장됨.
+    """조립을 재서 얻는 값. 코드가 아니라 데이터이며 JSON으로 저장됨.
 
         cal = sign * raw + offset
 
-    모터를 떼거나 다시 조립하면 무효가 됨. 튜닝값(게인)은 성격이 달라 여기 없음.
+    모터를 떼거나 다시 조립하면 무효가 됨. 튜닝값(게인)은 성격이 달라 여기 없음 --
+    같은 모델로 갈면 그대로 쓰는 값이라 `robot.yaml` 에 있음.
     """
 
     motor_id: int
@@ -177,6 +178,24 @@ class MotorCalibration:
     `0xFE`(영점 설정)는 모터가 저장하지만 "그때 다리가 어떤 자세였는지"는 어디에도
     남지 않음. 이 메모가 없으면 나중에 영점을 재현할 수 없음.
     """
+
+    limits_deg: Optional[Tuple[float, float]] = None
+    """하드스톱 위치 (cal 공간). `commission sweep` 이 재서 적음.
+
+    `None` 은 **아직 안 잼** 이지 "제한 없음" 이 아님. 값이 없으면
+    `Motor.is_configured` 가 `False` 라 제어 진입이 막힘.
+    """
+
+    def __post_init__(self):
+        if self.limits_deg is None:
+            return
+        lo, hi = float(self.limits_deg[0]), float(self.limits_deg[1])
+        if lo >= hi:
+            raise ValueError(
+                f"m{self.motor_id}: limits_deg 의 lo 가 hi 보다 작아야 함 "
+                f"(받은 값 {lo}, {hi})"
+            )
+        self.limits_deg = (lo, hi)
 
     def raw_to_cal(self, raw_deg: float) -> float:
         return float(self.sign) * float(raw_deg) + float(self.offset_deg)

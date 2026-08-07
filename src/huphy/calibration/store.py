@@ -2,8 +2,12 @@
 
 `config/calibration/*.json` <-> `dict[관절이름, MotorCalibration]`
 
-여기 담기는 것은 **조립을 재서 얻는 값**뿐임 — `sign`, `offset_deg`,
-`zero_reference`. 한계와 게인은 적는 값이라 `robot.yaml` 에 있음 (이슈 #2).
+여기 담기는 것은 **로봇을 만져서 알아내는 값**뿐임 — `sign`, `offset_deg`,
+`zero_reference`, `limits_deg`. 게인은 같은 모델로 갈면 그대로 쓰는 값이라
+`robot.yaml` 에 있음 (이슈 #2).
+
+`limits_deg` 와 `offset_deg` 는 `commission sweep` 이, `zero_reference` 는
+`commission zero` 가 적음. `sign` 은 설계가 정한 값이라 쓰는 코드가 없음.
 
 
 ## 관절 이름으로 키를 맞춤
@@ -35,19 +39,37 @@ from ..motors.base import MotorCalibration
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 """파일 형식 번호.
 
 형식이 바뀌면 올림. 읽을 때 대조해서, 코드가 기대하는 것과 다른 파일을 조용히
 읽어 들이지 않게 함 -- 항목 하나가 무시되면 그 관절만 항등변환으로 돎.
 """
 
-ENTRY_KEYS = {"sign", "offset_deg", "zero_reference"}
+ENTRY_KEYS = {"sign", "offset_deg", "zero_reference", "limits_deg"}
 FILE_KEYS = {"schema_version", "limb", "note", "motors"}
 
 
 class CalibrationError(ValueError):
     """캘리브레이션 파일이 읽히지 않거나 앞뒤가 안 맞음."""
+
+
+def _limits(where: str, raw) -> "tuple | None":
+    """`[최소, 최대]` 를 읽음. 없으면 `None` -- **아직 안 잼** 이라는 뜻임.
+
+    "제한 없음" 과 구분해야 함. 값이 없으면 `Motor.is_configured` 가 `False` 라
+    제어 진입이 막힘.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        raise CalibrationError(
+            f"{where}: limits_deg 는 [최소, 최대] 두 개여야 함 (받은 값 {raw!r})"
+        )
+    try:
+        return (float(raw[0]), float(raw[1]))
+    except (TypeError, ValueError) as e:
+        raise CalibrationError(f"{where}: limits_deg 가 숫자가 아님 -- {e}") from e
 
 
 def _entry(where: str, joint: str, data: Mapping) -> MotorCalibration:
@@ -58,7 +80,7 @@ def _entry(where: str, joint: str, data: Mapping) -> MotorCalibration:
     if unknown:
         raise CalibrationError(
             f"{where}.{joint}: 모르는 키 {unknown} (가용: {sorted(ENTRY_KEYS)}). "
-            f"한계와 게인은 robot.yaml 에 있음"
+            f"게인은 robot.yaml 에 있음"
         )
 
     try:
@@ -67,6 +89,8 @@ def _entry(where: str, joint: str, data: Mapping) -> MotorCalibration:
     except (TypeError, ValueError) as e:
         raise CalibrationError(f"{where}.{joint}: 숫자가 아닌 값 -- {e}") from e
 
+    limits = _limits(f"{where}.{joint}", data.get("limits_deg"))
+
     if sign == 0.0:
         raise CalibrationError(
             f"{where}.{joint}: sign 이 0임. 모든 raw 가 같은 cal 로 뭉개져 "
@@ -74,12 +98,16 @@ def _entry(where: str, joint: str, data: Mapping) -> MotorCalibration:
         )
 
     # motor_id 는 파일에 없음. robot.yaml 과 합칠 때 채워짐 (`attach`).
-    return MotorCalibration(
-        motor_id=-1,
-        sign=sign,
-        offset_deg=offset,
-        zero_reference=str(data.get("zero_reference", "")),
-    )
+    try:
+        return MotorCalibration(
+            motor_id=-1,
+            sign=sign,
+            offset_deg=offset,
+            zero_reference=str(data.get("zero_reference", "")),
+            limits_deg=limits,
+        )
+    except ValueError as e:
+        raise CalibrationError(f"{where}.{joint}: {e}") from None
 
 
 def load(path: "str | Path") -> Dict[str, MotorCalibration]:
@@ -145,6 +173,9 @@ def save(
                 "sign": float(c.sign),
                 "offset_deg": float(c.offset_deg),
                 "zero_reference": c.zero_reference,
+                "limits_deg": (
+                    None if c.limits_deg is None else [float(v) for v in c.limits_deg]
+                ),
             }
             for joint, c in calibrations.items()
         },
@@ -207,6 +238,7 @@ def attach(
             sign=c.sign,
             offset_deg=c.offset_deg,
             zero_reference=c.zero_reference,
+            limits_deg=c.limits_deg,
         )
     return out
 

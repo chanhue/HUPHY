@@ -490,30 +490,38 @@ def _sweep_step(bus, limb, group, index, total, names, hz) -> dict:
 
 
 def _sweep_report(limb: LimbConfig, results: dict, names: dict) -> int:
-    """오프셋은 캘리브레이션 파일에, 한계각은 화면에."""
-    if limb.calibration_path:
-        path = limb.calibration_path
-        entries = cal.load(path) if path.is_file() else cal.identity(limb.motors)
-        for mid, r in results.items():
-            previous = entries.get(names[mid], MotorCalibration(motor_id=-1))
-            entries[names[mid]] = MotorCalibration(
-                motor_id=-1,
-                sign=previous.sign,
-                offset_deg=r.offset_deg,
-                zero_reference=previous.zero_reference,
-            )
-        cal.save(path, entries, limb=limb.name)
-        print(f"\n  오프셋을 {path} 에 저장했음 ({len(results)}개).")
-    else:
-        print("\n  캘리브레이션 파일이 설정되어 있지 않아 오프셋을 저장하지 못함.")
+    """잰 값을 캘리브레이션 파일에 씀.
 
-    print(f"\n  robot.yaml 의 {limb.name}.motors 에 적을 것 (관절 좌표계):\n")
-    for mid, r in results.items():
-        motor = limb.motors[names[mid]]
+    오프셋과 한계각이 같은 자리에 들어감 -- 둘 다 이 조작에서 나온 값이고, 기계
+    영점을 다시 잡으면 둘 다 무효가 됨. `sign` 과 `zero_reference` 는 건드리지
+    않음. 다른 곳에서 정해지는 값임.
+    """
+    if not limb.calibration_path:
         print(
-            f"      {names[mid]+':':<10} {{id: {motor.id}, model: {motor.model}, "
-            f"limits_deg: [{r.lo_deg:.2f}, {r.hi_deg:.2f}], "
-            f"kp: {motor.gains.kp}, kd: {motor.gains.kd}}}"
+            "\n  캘리브레이션 파일이 설정되어 있지 않아 저장하지 못함.\n"
+            "  robot.yaml 의 이 팔다리에 calibration 항목을 적을 것."
+        )
+        return 1
+
+    path = limb.calibration_path
+    entries = cal.load(path) if path.is_file() else cal.identity(limb.motors)
+    for mid, r in results.items():
+        previous = entries.get(names[mid], MotorCalibration(motor_id=-1))
+        entries[names[mid]] = MotorCalibration(
+            motor_id=-1,
+            sign=previous.sign,
+            offset_deg=r.offset_deg,
+            zero_reference=previous.zero_reference,
+            limits_deg=(r.lo_deg, r.hi_deg),
+        )
+    cal.save(path, entries, limb=limb.name)
+
+    print(f"\n  {path} 에 적었음:\n")
+    print(f"      {'관절':<10} {'최소':>9} {'최대':>9} {'범위':>9} {'오프셋':>9}")
+    for mid, r in results.items():
+        print(
+            f"      {names[mid]:<10} {r.lo_deg:9.2f} {r.hi_deg:9.2f} "
+            f"{r.span_deg:9.2f} {r.offset_deg:9.2f}"
         )
 
     print(

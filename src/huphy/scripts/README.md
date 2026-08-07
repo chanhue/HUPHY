@@ -247,21 +247,26 @@ huphy-commission --limb right_leg sweep knee     # 하나만
 `ankle_a1` 과 `ankle_a2` 는 한 단계로 묶임 (`LINKED`). 로드로 발판에 물려 있어
 한쪽만 손으로 돌릴 수 없고, 발을 잡고 움직이면 두 범위가 한 번에 나옴.
 
-끝나면 오프셋을 캘리브레이션 파일에 적음. `sign` 과 `zero_reference` 는 건드리지
-않음 — `zero` 가 쓰는 칸임.
+끝나면 **오프셋과 한계각을 캘리브레이션 파일에 적음.** 둘 다 이 조작에서 나온
+값이고, 기계 영점을 다시 잡으면 둘 다 무효가 됨.
 
 ```json
-"knee": {"sign": 1.0, "offset_deg": -33.40, "zero_reference": "다리 편 상태"}
+"knee": {"sign": 1.0, "offset_deg": -33.40,
+         "zero_reference": "다리 편 상태", "limits_deg": [-20.61, 74.76]}
 ```
 
-한계각은 `robot.yaml` 에 붙일 수 있는 형태로 냄.
+`sign` 과 `zero_reference` 는 건드리지 않음 — 다른 곳에서 정해지는 값임.
+
+무엇을 적었는지 표로 보여줌.
 
 ```
-      knee:      {id: 10, model: RS02, limits_deg: [-20.61, 74.76], kp: 0.0, kd: 0.0}
+  config/calibration/right_leg.json 에 적었음:
+
+      관절                최소        최대        범위       오프셋
+      knee          -20.61     74.76     95.37    -33.40
 ```
 
-**파일을 고치지는 않음.** `robot.yaml` 은 사람이 적는 파일이고 주석이 많음 —
-프로그램이 다시 쓰면 주석이 날아감.
+캘리브레이션 파일이 설정되어 있지 않으면 적을 데가 없으므로 종료 코드 `1` 을 냄.
 
 단계마다 Enter 를 받으므로 **화면에서만 실행됨.** 파이프에서는 거부함.
 
@@ -354,7 +359,7 @@ can1 (socketcan) 를 열 수 없음: ...
 4  commission nudge <관절>   설정대로 움직이나. 관절마다, 눈으로
 5  commission zero <관절>    영점. 자세를 잡아 놓고 관절 전부
 6  commission sweep         가동 범위. 영점을 전부 끝낸 뒤 한 번에
-7  robot.yaml 에 붙임        limits_deg
+7  게인 튜닝               kp, kd 를 robot.yaml 에 적음
 8  bringup                  게인 튜닝. 그래프를 보며
 ```
 
@@ -486,7 +491,7 @@ huphy-test --limb right_leg range --period 10 --margin 8
 ### 관절 한계의 출처가 둘임
 
 ```
-hipz hipx hipy knee     robot.yaml 의 limits_deg
+hipz hipx hipy knee     캘리브레이션 파일의 limits_deg
 ankle_pitch ankle_roll  AnkleEnvelope 의 시험 범위
 ```
 

@@ -95,7 +95,7 @@ limbs:
 | `limb.motors_by_id()` | `{10: Motor}`. `RobStrideBus` 가 받는 형태 |
 | `limb.joint_of(10)` | `"knee"`. 진단 메시지용 |
 | `limb.unconfigured()` | 아직 못 채운 관절 이름들 |
-| `limb.is_configured` | 한계와 게인이 다 있는지 |
+| `limb.is_configured` | 한계와 게인이 다 있는지. 한계는 `Leg` 가 캘리브레이션에서 채움 |
 | `robot.limb(name)` | 없으면 가용 목록을 알려줌 |
 | `robot.limbs_of_kind("leg")` | 두 다리에 같은 처리를 걸 때 |
 | `robot.channels` | 중복 없이, 나온 순서대로 |
@@ -120,7 +120,7 @@ limbs:
 ROBOT_KEYS = {"name", "limbs", "safety", "telemetry"}
 LIMB_KEYS  = {"kind", "side", "channel", "interface", "control_hz",
               "calibration", "motors"}
-MOTOR_KEYS = {"id", "model", "limits_deg", "kp", "kd"}
+MOTOR_KEYS = {"id", "model", "kp", "kd"}
 ```
 
 YAML 은 모르는 키를 조용히 넘김. `contorl_hz: 200` 이라고 쓰면 그 줄이 무시되고
@@ -187,7 +187,7 @@ leg = robot.limb("right_leg")
 
 leg.channel          # "can1"
 leg.period_s         # 0.01
-leg.motors["knee"]   # Motor(id=10, model='RS02', limits_deg=(-20.65, 74.79), ...)
+leg.motors["knee"]   # Motor(id=10, model='RS02', limits_deg=None, ...)
 leg.motors_by_id()   # RobStrideBus 로 넘길 형태
 ```
 

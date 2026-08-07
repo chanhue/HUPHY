@@ -1,37 +1,43 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "limb": "left_leg",
-  "note": "왼다리 실측값. 아직 연결되지 않았고 전부 재기 전임. sign 은 설계가 정한 값이고, 왼다리 발목의 거울상은 AnkleGeometry.mirrored 가 처리함 -- 같은 관절 명령에 양다리가 같은 물리 동작을 하게 하려는 것임 (이슈 #13).",
+  "note": "왼다리 실측값. 아직 연결되지 않았고 전부 재기 전임. limits_deg 가 null 인 것은 '제한 없음' 이 아니라 '아직 안 잼' 이라는 뜻이고, 그 상태에서는 Motor.is_configured 가 False 라 제어 진입이 막힘. sign 은 설계가 정한 값이고, 왼다리 발목의 거울상은 AnkleGeometry.mirrored 가 처리함 (이슈 #13).",
   "motors": {
     "hipz": {
       "sign": 1.0,
       "offset_deg": 0.0,
-      "zero_reference": ""
+      "zero_reference": "",
+      "limits_deg": null
     },
     "hipx": {
       "sign": 1.0,
       "offset_deg": 0.0,
-      "zero_reference": ""
+      "zero_reference": "",
+      "limits_deg": null
     },
     "hipy": {
       "sign": 1.0,
       "offset_deg": 0.0,
-      "zero_reference": ""
+      "zero_reference": "",
+      "limits_deg": null
     },
     "knee": {
       "sign": 1.0,
       "offset_deg": 0.0,
-      "zero_reference": ""
+      "zero_reference": "",
+      "limits_deg": null
     },
     "ankle_a1": {
       "sign": 1.0,
       "offset_deg": 0.0,
-      "zero_reference": ""
+      "zero_reference": "",
+      "limits_deg": null
     },
     "ankle_a2": {
       "sign": 1.0,
       "offset_deg": 0.0,
-      "zero_reference": ""
+      "zero_reference": "",
+      "limits_deg": null
     }
   }
 }
