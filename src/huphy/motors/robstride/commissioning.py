@@ -38,7 +38,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional
 
-from ..base import MotorState, resolve_motor_list
+from ..base import MotorState, resolve_motor_list, wrap180
 from . import tables
 from .bus import MitCommand, PASSIVE, RobStrideBus, _command_frame
 
@@ -341,6 +341,10 @@ def sweep(
     `offsets` 를 받아 `cal = raw + offset` 으로 바꿔 기록함. `measure_offset` 이
     관절 0도 자세에서 낸 값을 그대로 넣으면 됨.
 
+    `[-180, 180)` 으로 접음. 모터가 그 범위로만 보고하므로 관절이 경계를 지나면
+    보고값이 360 만큼 건너뛰는데, 접지 않으면 그 건너뜀이 그대로 최소·최대에
+    들어감 (`motors/base.py` 의 `wrap180`).
+
     **0도를 먼저 정하고 범위를 재는 순서임.** 그래야 나온 최대·최소가 그대로
     `robot.yaml` 의 `limits_deg` 가 됨 -- 나중에 빼고 더할 일이 없음.
 
@@ -376,7 +380,7 @@ def sweep(
 
     results = {}
     for mid in ids:
-        start = bus.state(mid).position_deg + shift.get(mid, 0.0)
+        start = wrap180(bus.state(mid).position_deg + shift.get(mid, 0.0))
         results[mid] = SweepResult(
             motor_id=mid,
             lo_deg=start,
@@ -394,7 +398,7 @@ def sweep(
             if not state.is_valid:
                 continue
             entry = results[mid]
-            position = state.position_deg + entry.offset_deg
+            position = wrap180(state.position_deg + entry.offset_deg)
             positions[mid] = position
             results[mid] = SweepResult(
                 motor_id=mid,

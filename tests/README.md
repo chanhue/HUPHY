@@ -4,10 +4,10 @@
 tests/
 ├── test_safety.py          safety/                     42개
 ├── test_codec.py           robstride 사양·코덱          31개
-├── test_base.py            motors/base.py              42개
+├── test_base.py            motors/base.py              45개
 ├── test_canbus.py          motors/canbus.py            33개
 ├── test_robstride_bus.py   robstride/bus.py            40개
-├── test_commissioning.py   robstride/commissioning.py  45개
+├── test_commissioning.py   robstride/commissioning.py  46개
 ├── test_config.py          config/                     46개
 ├── test_calibration.py     calibration/                38개
 ├── test_commission_cli.py  scripts/commission.py       52개
@@ -28,7 +28,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-707 passed in 11.5s
+710 passed in 11.3s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -89,13 +89,13 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestDecodeState` | 4 | 상태 프레임 해석 |
 | `TestDecodeFault` | 4 | 고장 워드 해석 |
 
-### `test_base.py` — 42개
+### `test_base.py` — 45개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
 | `TestGains` | 4 | `Gains`, `scaled` |
 | `TestMotor` | 9 | 한계 순서 검증, `is_configured` |
-| `TestMotorCalibration` | 12 | raw ↔ cal 변환 |
+| `TestMotorCalibration` | 14 | raw ↔ cal 변환, ±180 경계 접기 |
 | `TestMotorState` | 5 | 신선도 판정 |
 | `TestMotorFault` | 3 | 비트 필드 |
 | `TestResolveMotorList` | 5 | 대상 모터 확정 |
@@ -126,7 +126,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestRefreshStates` | 4 | `PASSIVE` 전송, 게인 0, 큐 비우기 |
 | `TestFault` | 5 | 비트 해석, 무응답과 정상의 구분 |
 
-### `test_commissioning.py` — 45개
+### `test_commissioning.py` — 46개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -136,7 +136,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestSetProtocol` | 4 | 전원 재투입 경고 |
 | `TestNudge` | 10 | 시작 복귀, 토크 정리, 진폭 상한 |
 | `TestScan` | 4 | 응답자 수집 |
-| `TestSweep` | 8 | 최대·최소 기록, 토크 차단, 오프셋 반영 |
+| `TestSweep` | 9 | 최대·최소 기록, 토크 차단, 오프셋 반영, ±180 경계 |
 | `TestMeasureOffset` | 4 | 지금 자세가 0도, 토크 차단, 무응답 거부 |
 
 ### `test_config.py` — 46개

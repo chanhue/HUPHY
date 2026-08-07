@@ -155,6 +155,22 @@ class MotorState:
         return self.age(now) <= float(max_age_s)
 
 
+def wrap180(deg: float) -> float:
+    """`[-180, 180)` 으로 접음.
+
+    모터는 `zero_sta = 1` 이라 각도를 이 범위로만 보고함. 관절이 경계를 지나면
+    보고값이 179 에서 -177 로 **360 만큼 건너뜀.**
+
+    `cal = sign x raw + offset` 은 산수라 그 건너뜀이 그대로 통과함. 접지 않으면
+    영점이 raw 의 `±180` 근처에 잡힌 관절에서 40도 움직인 것이 356도 범위로 나오고,
+    한계 가드도 그 값을 보고 엉뚱하게 자름.
+
+    두 공간에 **같은 규약**을 씀 (이슈 #1). 전제는 관절이 한 바퀴를 돌지 않는 것 --
+    영점에서 `±180` 안에 전 가동 범위가 들어와야 함. 다리 관절은 전부 그러함.
+    """
+    return (float(deg) + 180.0) % 360.0 - 180.0
+
+
 @dataclass
 class MotorCalibration:
     """조립을 재서 얻는 값. 코드가 아니라 데이터이며 JSON으로 저장됨.
@@ -198,7 +214,7 @@ class MotorCalibration:
         self.limits_deg = (lo, hi)
 
     def raw_to_cal(self, raw_deg: float) -> float:
-        return float(self.sign) * float(raw_deg) + float(self.offset_deg)
+        return wrap180(float(self.sign) * float(raw_deg) + float(self.offset_deg))
 
     def cal_to_raw(self, cal_deg: float) -> float:
         if abs(float(self.sign)) < 1e-9:
@@ -206,7 +222,7 @@ class MotorCalibration:
                 f"m{self.motor_id}: sign이 0이라 역변환 불가. "
                 f"캘리브레이션이 채워지지 않았을 수 있음"
             )
-        return (float(cal_deg) - float(self.offset_deg)) / float(self.sign)
+        return wrap180((float(cal_deg) - float(self.offset_deg)) / float(self.sign))
 
 
 @dataclass

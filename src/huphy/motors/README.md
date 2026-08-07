@@ -42,7 +42,7 @@ id 로 키를 맞춘 표를 여러 개 늘어놓지 않고 **모터 하나당 �
 모터가 보고하는 각도(raw)와 사람이 말하는 관절 각도(cal)는 다름.
 
 ```
-cal = sign * raw + offset
+cal = wrap180(sign * raw + offset)
 ```
 
 어긋나는 원인은 둘임.

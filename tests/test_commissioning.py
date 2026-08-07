@@ -440,6 +440,31 @@ class TestSweep:
         results = C.sweep(leg, [10], should_stop=lambda: True)
         assert results[10].offset_deg == 0.0
 
+    def test_crossing_the_boundary_does_not_blow_up(self, leg, live):
+        """모터는 `[-180, 180)` 로만 보고함. 경계를 지나면 보고값이 360 만큼
+        건너뛰는데, 접지 않으면 40도 움직인 것이 356도 범위로 나옴."""
+        positions = [170.0, 179.0, -177.0, -165.0, -160.0]
+        step = {"i": 0}
+
+        def moving_send(msg):
+            live.sent.append(msg)
+            mid = msg.arbitration_id
+            index = min(step["i"], len(positions) - 1)
+            live.rx.append(state_frame(mid, positions[index], model=MODELS_BY_ID[mid]))
+
+        live.send = moving_send
+
+        def should_stop():
+            step["i"] += 1
+            return step["i"] > len(positions)
+
+        results = C.sweep(
+            leg, [10], should_stop=should_stop, hz=10000.0, offsets={10: -170.0}
+        )
+        assert results[10].span_deg == pytest.approx(30.0, abs=0.1)
+        assert results[10].lo_deg == pytest.approx(0.0, abs=0.05)
+        assert results[10].hi_deg == pytest.approx(30.0, abs=0.05)
+
 
 class TestMeasureOffset:
     """지금 자세를 관절 0도로 놓는 값을 냄. `sweep` 이 단계마다 부름."""

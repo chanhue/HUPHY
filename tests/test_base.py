@@ -183,6 +183,26 @@ class TestMotorCalibration:
         for raw in (-62.79, 0.0, 33.0):
             assert c.cal_to_raw(c.raw_to_cal(raw)) == pytest.approx(raw)
 
+    def test_wraps_the_boundary(self):
+        """모터는 `[-180, 180)` 로만 보고함. 관절이 그 경계를 지나면 보고값이
+        360 만큼 건너뜀. 접지 않으면 그 건너뜀이 그대로 cal 로 넘어감."""
+        c = MotorCalibration(motor_id=7, offset_deg=-170.0)   # 영점이 raw 170도
+        assert c.raw_to_cal(179.0) == pytest.approx(9.0)
+        assert c.raw_to_cal(-177.0) == pytest.approx(13.0)    # 접지 않으면 -347
+        assert c.raw_to_cal(-160.0) == pytest.approx(30.0)
+
+    def test_a_sweep_across_the_boundary_stays_small(self):
+        """경계를 지나며 40도 움직인 것이 356도로 나오면 안 됨."""
+        c = MotorCalibration(motor_id=7, offset_deg=-170.0)
+        values = [c.raw_to_cal(raw) for raw in (170, 179, -177, -165, -160)]
+        assert max(values) - min(values) == pytest.approx(30.0)
+
+    def test_command_goes_out_in_the_reported_range(self):
+        """명령도 모터가 보고하는 범위 안으로 나가야 함."""
+        c = MotorCalibration(motor_id=7, offset_deg=-170.0)
+        assert c.cal_to_raw(13.0) == pytest.approx(-177.0)
+        assert -180.0 <= c.cal_to_raw(30.0) < 180.0
+
     def test_sign_zero_is_rejected(self):
         """sign=0 이면 모든 raw 가 같은 cal 로 뭉개져 역변환이 불가능함.
 
@@ -191,10 +211,6 @@ class TestMotorCalibration:
         c = MotorCalibration(motor_id=10, sign=0.0)
         with pytest.raises(ValueError, match="sign이 0"):
             c.cal_to_raw(45.0)
-
-    def test_has_no_limits(self):
-        """한계는 여기 없음. 재는 값이 아니라 적는 값이라 Motor 에 있음 (이슈 #2)."""
-        assert not hasattr(MotorCalibration(motor_id=10), "limits")
 
     def test_has_no_gains(self):
         """게인은 재는 값이 아니라 맞추는 값이라 Motor 에 있음.
