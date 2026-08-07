@@ -159,7 +159,7 @@ pip install -e ".[dev]"     # + pytest
 ### 확인
 
 ```bash
-python -m pytest tests -q          # 648 passed
+python -m pytest tests -q          # 707 passed
 huphy-commission --help
 ```
 
@@ -761,7 +761,7 @@ telemetry/        옆에서 관찰. 제어를 방해하지 않음
 canbus.py    ← 여기 하나뿐
 ```
 
-그 위는 `CanFrame` 만 다룸. 그래서 **테스트 648개가 `python-can` 없이 돌아감.**
+그 위는 `CanFrame` 만 다룸. 그래서 **테스트 707개가 `python-can` 없이 돌아감.**
 
 ---
 
@@ -956,7 +956,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-648 passed in 11.0s
+707 passed in 11.4s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -964,6 +964,15 @@ PYTHONPATH=src python3 -m pytest tests -q
 - 순수 계산 계층은 애초에 `python-can` 을 안 씀
 - 전송 계층은 `import can` 이 함수 안에 있어 가짜 모듈로 갈아끼움
 - 가짜 버스가 **명령에 응답함** — 실제 모터가 명령을 받은 뒤 답하는 것과 같은 순서
+
+파일 하나만 돌릴 수도 있음. 무엇을 고정하는지는 [`tests/README.md`](tests/README.md).
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/test_leg.py -q
+PYTHONPATH=src python3 -m pytest tests -q -k sweep
+```
+
+`test_bringup.py` 가 가장 오래 걸림(약 7초) — 루프가 실제로 도는 항목이 있음.
 
 ### 확인되지 않는 것
 
