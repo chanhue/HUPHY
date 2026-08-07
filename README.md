@@ -316,12 +316,14 @@ huphy-commission --limb right_leg sweep
 huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
 ```
 
-### b 가 중요함
+### b 는 모터를 바꾸거나 왼다리를 붙일 때
 
-설정에는 `7=hipz 8=hipx 9=hipy 10=knee 11=ankle_a1 12=ankle_a2` 로 되어 있지만
-**실물로 확인된 적이 없음** ([이슈 #8](docs/issues.md)).
+오른다리 매핑은 실물에서 확인됨 ([이슈 #8](docs/issues.md)).
 
-`nudge` 로 한 모터씩 움직여 어느 관절이 도는지 **눈으로** 봐야 함.
+    7 hipz   8 hipx   9 hipy   10 knee   11 ankle_a1   12 ankle_a2
+
+**모터를 교체하거나 CAN id 를 바꾸면 다시 확인할 것.** 틀리면 엉뚱한 관절이
+움직이는데, 프레임은 정상적으로 나가고 응답도 와서 **코드로는 알 수 없음.**
 
 ### c 전에는 어느 자세가 0도인지 모름
 
@@ -394,6 +396,19 @@ huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
 ### 커미셔닝 — 조립할 때 한 번
 
 **참조용 목록임. 실제로 치는 순서는 [5번](#5-처음-브링업-순서).**
+
+관절 이름은 **생략할 수 있음.** 빼고 치면 목록을 띄우고 고르게 함 —
+`clear-fault` `sweep` `zero` 는 Enter 만 쳐도 전부로 감.
+
+```
+  right_leg -- 무엇을 영점 잡을까요?
+
+    1) hipz       id=7   RS02
+    ...
+    a) 전부
+
+  선택 [a]:
+```
 
 #### 읽기만 함 — 아무것도 안 움직임
 
@@ -564,7 +579,6 @@ huphy-bringup --limb right_leg
 |---|---|---|
 | **게인 미실측** (`kp = 0`) [#9] | 토크가 안 나감. 다리가 안 움직임 | `bringup` 으로 튜닝 |
 | **영점 미실측** (`zero_reference` 비어 있음) [#9] | `cal` 이 `raw` 와 같음. 좌표계가 없는 것과 같음 | `commission zero` |
-| **모터 매핑 미확인** [#8] | 명령한 관절이 아닌 것이 움직일 수 있음 | `commission nudge` |
 | **발목 기하 출처 미확인** [#13] | 어느 다리 것인지 모름. 반대쪽은 계산으로 만든 거울상 | 발 각도를 재서 |
 | **왼다리 한계 없음** [#9] | 왼다리는 제어 진입이 막힘 | `commission sweep` |
 | **전제를 코드로 못 읽음** [#11] | `zero_sta` 와 프로토콜을 확인할 방법이 없음 | 외부 도구로 대체 중 |

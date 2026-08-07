@@ -55,6 +55,38 @@ right_leg 에 'elbow' 관절이 없음
 (가용: ['ankle_a1', 'ankle_a2', 'hipx', 'hipy', 'hipz', 'knee'])
 ```
 
+### 생략하면 물어봄
+
+관절을 받는 명령(`clear-fault` `sweep` `nudge` `zero` `mode` `can-id` `protocol`)은
+이름을 빼고 실행할 수 있음. 터미널이면 목록을 띄우고 고르게 함.
+
+```
+$ huphy-commission --limb right_leg zero --note "다리 편 상태" --yes
+
+  right_leg -- 무엇을 영점 잡을까요?
+
+    1) hipz       id=7   RS02
+    2) hipx       id=8   RS02
+    3) hipy       id=9   RS02
+    4) knee       id=10  RS02
+    5) ankle_a1   id=11  RS00
+    6) ankle_a2   id=12  RS00
+    a) 전부
+
+  선택 [a]:
+```
+
+번호·이름·`a`(전부) 를 받음. `clear-fault` `sweep` `zero` 는 전부가 기본이라 그냥
+Enter 를 쳐도 됨. `nudge` `mode` `can-id` `protocol` 은 한 관절만 다루므로 전부를
+고를 수 없음.
+
+터미널이 아니면(파이프·스크립트·테스트) 물어볼 수 없음. 전부가 기본인 명령은 전부로
+가고, 하나만 받는 명령은 거부함.
+
+```
+관절을 지정할 것 (가용: [...]). 화면이 아니라 물어볼 수 없음
+```
+
 ---
 
 ## `--limb` 을 요구함

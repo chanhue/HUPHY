@@ -308,6 +308,29 @@ class TestZero:
         with pytest.raises(SystemExit):
             run("--limb", "right_leg", "zero", "knee", "--yes")
 
+    def test_all_joints_when_name_omitted(self, run, cfg):
+        """토크가 꺼진 채로 자세를 유지해야 하는데, 명령을 나눠 치면 다리가 무너짐."""
+        FakeBus.online = {10, 11}
+        code, out = run("--limb", "right_leg", "zero", "--note", "편 상태", "--yes")
+        assert code == 0
+        data = json.loads((cfg.parent / "calibration" / "right_leg.json").read_text(encoding="utf-8"))
+        assert all(e["zero_reference"] == "편 상태" for e in data["motors"].values())
+
+    def test_partial_failure_is_reported(self, run, cfg):
+        """응답이 없는 모터는 메모가 비어 남음. 어느 것이 실패했는지 알려줌."""
+        code, out = run("--limb", "right_leg", "zero", "--note", "편 상태", "--yes")
+        assert code == 1
+        assert "ankle_a1" in out.out
+        data = json.loads((cfg.parent / "calibration" / "right_leg.json").read_text(encoding="utf-8"))
+        assert data["motors"]["knee"]["zero_reference"] == "편 상태"
+        assert data["motors"]["ankle_a1"]["zero_reference"] == ""
+
+    def test_points_at_sweep_next(self, run):
+        """영점 뒤에 범위를 재야 함. 자세를 그대로 두고."""
+        FakeBus.online = {10, 11}
+        _, out = run("--limb", "right_leg", "zero", "--note", "편 상태", "--yes")
+        assert "sweep" in out.out
+
     def test_disables_torque_first(self, run):
         """영점을 잡으면 좌표계가 옮겨가는데 직전 목표각은 옛 좌표계 값임."""
         run("--limb", "right_leg", "zero", "knee", "--note", "편 상태", "--yes")
@@ -334,6 +357,17 @@ class TestTargeting:
         """사람은 관절로 말함. 모터 id 를 외우게 하지 않음."""
         with pytest.raises(SystemExit, match="'elbow' 관절이 없음"):
             run("--limb", "right_leg", "nudge", "elbow")
+
+    def test_omitted_joint_means_all_where_all_is_allowed(self, run):
+        """화면이 아니면 물어볼 수 없음. 전부가 기본인 명령은 전부로 감."""
+        FakeBus.online = {10, 11}
+        _, out = run("--limb", "right_leg", "zero", "--note", "편 상태", "--yes")
+        assert "knee" in out.out and "ankle_a1" in out.out
+
+    def test_omitted_joint_is_refused_where_one_is_required(self, run):
+        """nudge 는 한 관절만 움직임. 물어볼 수 없으면 고를 방법이 없음."""
+        with pytest.raises(SystemExit, match="관절을 지정할 것"):
+            run("--limb", "right_leg", "nudge")
 
     def test_missing_config(self, fake_can, tmp_path):
         with pytest.raises(SystemExit, match="설정 파일이 없음"):

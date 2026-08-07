@@ -101,6 +101,54 @@ def _joint_id(limb: LimbConfig, joint: str) -> int:
     return limb.motors[joint].id
 
 
+def choose_joints(
+    limb: LimbConfig,
+    joint: Optional[str],
+    *,
+    allow_all: bool,
+    what: str,
+) -> List[str]:
+    """무엇을 대상으로 할지 정함. 인자가 없으면 **물어봄.**
+
+    관절 이름을 외우지 않아도 되게 하려는 것임. 목록을 보여주고 번호나 이름을 받음.
+
+    화면이 아니면(파이프, 스크립트) 묻지 않음 -- 입력이 없는 곳에서 멈추면 안 됨.
+    그때는 `allow_all` 이면 전부, 아니면 에러임.
+    """
+    if joint:
+        _joint_id(limb, joint)
+        return [joint]
+
+    names = list(limb.motors)
+
+    if not sys.stdin.isatty():
+        if allow_all:
+            return names
+        raise SystemExit(
+            f"관절을 지정할 것 (가용: {names}). 화면이 아니라 물어볼 수 없음"
+        )
+
+    print(f"\n  {limb.name} -- 무엇을 {what}?\n")
+    for index, name in enumerate(names, start=1):
+        motor = limb.motors[name]
+        print(f"    {index}) {name:<10} id={motor.id:<3} {motor.model}")
+    if allow_all:
+        print(f"    a) 전부")
+    print()
+
+    default = "a" if allow_all else ""
+    raw = input(f"  선택{' [a]' if allow_all else ''}: ").strip().lower() or default
+
+    if allow_all and raw in ("a", "all", "전부"):
+        return names
+    if raw.isdigit() and 1 <= int(raw) <= len(names):
+        return [names[int(raw) - 1]]
+    if raw in names:
+        return [raw]
+
+    raise SystemExit(f"{raw!r} 는 고를 수 없음 (가용: {names})")
+
+
 def _open(limb: LimbConfig) -> RobStrideBus:
     bus = RobStrideBus(
         CanBus(limb.channel, interface=limb.interface), limb.motors_by_id()
@@ -183,9 +231,10 @@ def cmd_fault(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
 
 def cmd_clear_fault(args, limb: LimbConfig, bus: RobStrideBus) -> int:
-    ids = [_joint_id(limb, args.joint)] if args.joint else None
-    bus.clear_fault(ids)
-    print("고장 상태를 지웠음. 원인이 남아 있으면 다시 뜸.")
+    joints = choose_joints(limb, args.joint, allow_all=True, what="지울까요")
+    bus.clear_fault([limb.motors[j].id for j in joints])
+    print(f"\n  고장 상태를 지웠음: {', '.join(joints)}")
+    print("  원인이 남아 있으면 다시 뜸.")
     return 0
 
 
@@ -205,7 +254,8 @@ def _enter_pressed() -> bool:
 
 def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     """토크를 끄고 손으로 미는 동안 가동 범위를 기록함."""
-    ids = [_joint_id(limb, args.joint)] if args.joint else None
+    joints = choose_joints(limb, args.joint, allow_all=True, what="잴까요")
+    ids = [limb.motors[j].id for j in joints]
     names = {motor.id: name for name, motor in limb.motors.items()}
 
     print(
@@ -256,7 +306,9 @@ def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
 
 def cmd_nudge(args, limb: LimbConfig, bus: RobStrideBus) -> int:
-    motor_id = _joint_id(limb, args.joint)
+    joint = choose_joints(limb, args.joint, allow_all=False, what="움직일까요")[0]
+    args.joint = joint
+    motor_id = limb.motors[joint].id
     print(
         f"{limb.name}.{args.joint} (id={motor_id}) 를 {args.delta:+.1f}도 움직였다 되돌림.\n"
         f"  게인 kp={args.kp} kd={args.kd}\n"
@@ -279,40 +331,69 @@ def cmd_nudge(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
 
 def cmd_zero(args, limb: LimbConfig, bus: RobStrideBus) -> int:
-    motor_id = _joint_id(limb, args.joint)
+    """지금 자세를 기계 영점으로 잡음.
 
-    bus.disable_torque([motor_id])
-    C.set_zero(bus, motor_id, zero_reference=args.note)
-    print(f"{limb.name}.{args.joint} 영점 설정: {args.note}")
+    관절 이름을 생략하면 **전부** 잡음. 토크가 꺼진 상태로 자세를 유지해야 하는데,
+    명령을 여섯 번 나눠 치면 그동안 다리가 무너짐.
+    """
+    joints = choose_joints(limb, args.joint, allow_all=True, what="영점 잡을까요")
 
-    if not limb.calibration_path:
-        print("  캘리브레이션 파일이 설정되어 있지 않아 메모를 저장하지 못함.")
-        return 0
+    print(f"\n{limb.name} 영점: {', '.join(joints)}")
+    print(f'  자세: "{args.note}"\n')
 
-    path = limb.calibration_path
-    entries = cal.load(path) if path.is_file() else cal.identity(limb.motors)
-    previous = entries.get(args.joint, MotorCalibration(motor_id=-1))
-    entries[args.joint] = MotorCalibration(
-        motor_id=-1,
-        sign=previous.sign,
-        offset_deg=previous.offset_deg,
-        zero_reference=args.note,
+    bus.disable_torque([limb.motors[j].id for j in joints])
+
+    done = []
+    failed = []
+    for joint in joints:
+        try:
+            C.set_zero(bus, limb.motors[joint].id, zero_reference=args.note)
+        except C.CommissioningError as e:
+            failed.append(joint)
+            print(f"  {joint:10} 실패 -- {e}")
+        else:
+            done.append(joint)
+            print(f"  {joint:10} 잡음")
+
+    if done and limb.calibration_path:
+        path = limb.calibration_path
+        entries = cal.load(path) if path.is_file() else cal.identity(limb.motors)
+        for joint in done:
+            previous = entries.get(joint, MotorCalibration(motor_id=-1))
+            entries[joint] = MotorCalibration(
+                motor_id=-1,
+                sign=previous.sign,
+                offset_deg=previous.offset_deg,
+                zero_reference=args.note,
+            )
+        cal.save(path, entries, limb=limb.name)
+        print(f"\n  메모를 {path} 에 저장했음 ({len(done)}개).")
+    elif done:
+        print("\n  캘리브레이션 파일이 설정되어 있지 않아 메모를 저장하지 못함.")
+
+    if failed:
+        print(f"\n  실패한 관절: {failed}. 배선과 CAN id 를 확인하고 다시 할 것.")
+        return 1
+
+    print(
+        f"\n  다음: 자세를 그대로 두고 가동 범위를 잼.\n"
+        f"    huphy-commission --limb {limb.name} sweep"
     )
-    cal.save(path, entries, limb=limb.name)
-    print(f"  메모를 {path} 에 저장했음.")
     return 0
 
 
 def cmd_mode(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     mode = tables.ControlMode[args.to.upper()]
-    motor_id = _joint_id(limb, args.joint)
+    args.joint = choose_joints(limb, args.joint, allow_all=False, what="바꿀까요")[0]
+    motor_id = limb.motors[args.joint].id
     C.set_control_mode(bus, motor_id, mode)
     print(f"{limb.name}.{args.joint} 제어 모드 -> {mode.name}")
     return 0
 
 
 def cmd_can_id(args, limb: LimbConfig, bus: RobStrideBus) -> int:
-    motor_id = _joint_id(limb, args.joint)
+    args.joint = choose_joints(limb, args.joint, allow_all=False, what="바꿀까요")[0]
+    motor_id = limb.motors[args.joint].id
     C.set_can_id(bus, motor_id, args.to)
     print(
         f"{limb.name}.{args.joint}: {motor_id} -> {args.to}\n"
@@ -323,7 +404,8 @@ def cmd_can_id(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
 def cmd_protocol(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     protocol = tables.Protocol[args.to.upper()]
-    motor_id = _joint_id(limb, args.joint)
+    args.joint = choose_joints(limb, args.joint, allow_all=False, what="바꿀까요")[0]
+    motor_id = limb.motors[args.joint].id
     C.set_protocol(bus, motor_id, protocol)
     print(
         f"{limb.name}.{args.joint} 프로토콜 -> {protocol.name}\n"
@@ -344,6 +426,7 @@ def build_parser() -> argparse.ArgumentParser:
             "예시:\n"
             "  --limb right_leg scan\n"
             "  --limb right_leg state\n"
+            '  --limb right_leg zero --note "다리 편 상태" --yes\n'
             "  --limb right_leg sweep\n"
             "  --limb right_leg nudge knee --delta 5\n"
             '  --limb right_leg zero knee --note "다리 편 상태" --yes\n'
@@ -360,33 +443,33 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("fault", help="고장 상태 조회")
 
     c = sub.add_parser("clear-fault", help="고장 상태 지우기")
-    c.add_argument("joint", nargs="?", help="생략하면 전부")
+    c.add_argument("joint", nargs="?", help="생략하면 물어봄 (기본 전부)")
 
     s = sub.add_parser("sweep", help="토크를 끄고 손으로 밀어 가동 범위 측정")
-    s.add_argument("joint", nargs="?", help="생략하면 전부")
+    s.add_argument("joint", nargs="?", help="생략하면 물어봄 (기본 전부)")
 
     n = sub.add_parser("nudge", help="조금 움직였다 되돌림. 어느 관절인지 확인용")
-    n.add_argument("joint")
+    n.add_argument("joint", nargs="?", help="생략하면 물어봄")
     n.add_argument("--delta", type=float, default=5.0, help="기본 5도, 최대 20도")
     n.add_argument("--kp", type=float, default=5.0)
     n.add_argument("--kd", type=float, default=0.5)
 
     z = sub.add_parser("zero", help="[영구] 지금 자세를 기계 영점으로")
-    z.add_argument("joint")
+    z.add_argument("joint", nargs="?", help="생략하면 물어봄 (기본 전부)")
     z.add_argument("--note", required=True, help="어느 자세에서 잡는지. 나중에 재현하려면 필요함")
     z.add_argument("--yes", action="store_true", help=YES_HELP)
 
     m = sub.add_parser("mode", help="제어 모드 변경")
-    m.add_argument("joint")
+    m.add_argument("joint", nargs="?", help="생략하면 물어봄")
     m.add_argument("--to", default="mit", choices=[x.name.lower() for x in tables.ControlMode])
 
     i = sub.add_parser("can-id", help="[영구] CAN id 변경")
-    i.add_argument("joint")
+    i.add_argument("joint", nargs="?", help="생략하면 물어봄")
     i.add_argument("--to", type=int, required=True)
     i.add_argument("--yes", action="store_true", help=YES_HELP)
 
     pr = sub.add_parser("protocol", help="[영구] 프로토콜 전환. 전원 재투입 필요")
-    pr.add_argument("joint")
+    pr.add_argument("joint", nargs="?", help="생략하면 물어봄")
     pr.add_argument("--to", default="mit", choices=[x.name.lower() for x in tables.Protocol])
     pr.add_argument("--yes", action="store_true", help=YES_HELP)
 
