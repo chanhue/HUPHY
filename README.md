@@ -298,7 +298,7 @@ huphy-commission --limb right_leg fault
 huphy-commission --limb right_leg nudge          # 목록에서 하나씩 골라 가며
 
 # c  영점 — 다리를 기준 자세로 손으로 잡아 놓고, 관절 전부
-huphy-commission --limb right_leg zero --yes     # Enter(전부), 이어서 자세를 적음
+huphy-commission --limb right_leg zero --yes     # 관절마다 Enter, 하나씩 잡힘
 
 # d  0도와 가동 범위 — 전부 영점 잡은 뒤. 관절마다 두 번 Enter
 huphy-commission --limb right_leg sweep
@@ -328,7 +328,8 @@ b·c 는 관절을 생략했음. 목록이 뜨고 골라서 진행함. 관절과
 다리를 원하는 자세로 손으로 잡아 놓고 **관절 전부**를 그 자세에서 잡음. 여섯 개를
 한 번에 잡음 — 나눠 치면 그 사이에 다리가 무너짐.
 
-그때 어떤 자세였는지를 적어야 나중에 재현할 수 있음. 관절을 생략하면 이어서 물어봄.
+그때 어떤 자세였는지를 적어야 나중에 재현할 수 있음. 관절을 생략하면 이어서 물어보고,
+**관절마다 Enter 를 받아 하나씩 잡음.**
 
 ```
   right_leg -- 무엇을 영점 잡을까요?
@@ -340,7 +341,24 @@ b·c 는 관절을 생략했음. 목록이 뜨고 골라서 진행함. 관절과
     1) note    (필수)     어느 자세에서 잡는지. 나중에 재현하려면 필요함
 
   입력 [(필수)]: 다리 편 상태, 발바닥 평면 접촉
+
+right_leg 영점: hipz, hipx, hipy, knee, ankle_a1, ankle_a2
+  자세: "다리 편 상태, 발바닥 평면 접촉"
+
+  자세를 잡은 채로 관절마다 Enter.
+
+  hipz       Enter:
+  hipz       잡음
+  hipx       Enter:
+  hipx       잡음
+  ...
 ```
+
+토크는 **맨 앞에서 관절 전부** 한 번에 끊음. 하나 잡을 때마다 끊으면 그 사이에
+자세가 무너짐.
+
+관절별로 성공·실패가 따로 나오고, 프레임이 실제로 나간 관절만 메모가 저장됨.
+하나라도 실패하면 종료 코드 `1` — 그 관절만 다시 하면 됨.
 
 ### d 가 c 뒤인 이유
 
