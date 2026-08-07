@@ -222,18 +222,18 @@ can1 (socketcan) 를 열 수 없음: ...
 ## 실물에서의 순서
 
 ```
-1  sudo ip link set can1 up type can bitrate 1000000
+1  CAN 채널 올리기          어댑터 종류에 따라 다름. 루트 README 4번
 2  commission scan          6개 다 응답하나
 3  commission fault         고장 없나
-4  commission state         지금 어디 있나
-5  commission nudge <관절>   설정대로 움직이나 (관절마다)
-6  commission zero <관절>    영점 (자세를 잡아 놓고 하나씩)
-7  commission sweep         가동 범위. 영점 뒤에 재야 함
+4  commission nudge <관절>   설정대로 움직이나. 관절마다, 눈으로
+5  commission zero <관절>    영점. 자세를 잡아 놓고 관절 전부
+6  commission sweep         가동 범위. 영점을 전부 끝낸 뒤 한 번에
+7  robot.yaml 에 붙임        limits_deg
 8  bringup                  게인 튜닝. 그래프를 보며
 ```
 
-**7 이 6 뒤인 이유**: `sweep` 이 raw 공간으로 재는데 raw 는 영점에 매달려 있음.
-영점을 다시 잡으면 범위도 다시 재야 함.
+**6 이 5 뒤인 이유**: `sweep` 이 재는 값은 영점을 기준으로 한 각도임. 영점을 다시
+잡으면 범위도 다시 재야 함.
 
 ---
 

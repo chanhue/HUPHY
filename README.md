@@ -27,11 +27,15 @@
 ## 1. 하드웨어 준비
 
 ```
-라즈베리파이 + CAN HAT
+라즈베리파이
+CAN 어댑터            USB(CANable 등) 또는 CAN HAT. 다리마다 하나
 RobStride RS02 x4    고관절 3, 무릎 1
 RobStride RS00 x2    발목 링키지
 24V 전원
 ```
+
+어댑터 종류에 따라 **채널 올리는 방법만** 달라짐 ([4번](#4-can-채널-올리기)).
+코드와 설정은 같음.
 
 ### 배선
 
@@ -39,8 +43,8 @@ RobStride RS00 x2    발목 링키지
 불안정해짐.
 
 ```
-CAN HAT ── m7 ── m8 ── m9 ── m10 ── m11 ── m12
-[120Ω]                                    [120Ω]
+어댑터 ── m7 ── m8 ── m9 ── m10 ── m11 ── m12
+[120Ω]                                  [120Ω]
 ```
 
 오른다리는 `can1`, 왼다리는 `can0` 을 씀. **두 다리를 한 버스에 묶지 않음** —
@@ -185,12 +189,71 @@ PYTHONPATH=src python3 -m pytest tests -q
 
 **속도는 커널이 정함.** 파이썬이 바꿀 수 없으므로 채널을 올릴 때 넣어야 함.
 
+**어댑터 종류에 따라 방법이 다름.** 어디서 속도를 정하느냐가 갈림길임.
+
+### USB 어댑터 (CANable 등)
+
+USB 로 붙으면 커널이 **시리얼 포트**로 봄. `slcand` 가 그걸 CAN 장치로 바꿔 줌.
+
 ```bash
-sudo ip link set can1 up type can bitrate 1000000
-ip -details link show can1                       # 확인
+sudo slcand -o -c -s8 /dev/canable0 can1
+sudo ip link set can1 up
 ```
 
-`state UP` 과 `bitrate 1000000` 이 보여야 함.
+| | 뜻 |
+|---|---|
+| `-o` | 어댑터의 CAN 채널을 엶 |
+| `-c` | 데몬이 끝날 때 닫음 |
+| `-s8` | **비트레이트 1 Mbps** |
+| `/dev/canable0` | 시리얼 포트 |
+| `can1` | 만들어낼 커널 장치 이름 |
+
+`-sN` 은 속도 코드임.
+
+```
+s0  10k    s3  100k    s6  500k
+s1  20k    s4  125k    s7  800k
+s2  50k    s5  250k    s8  1M     <- 우리
+```
+
+**여기서는 `ip link` 에 `bitrate` 를 못 넘김.** 속도를 어댑터가 들고 있어서 커널
+쪽에 비트타이밍이 없음.
+
+#### 장치 이름을 고정할 것
+
+USB 는 꽂는 순서대로 `/dev/ttyACM0`, `ttyACM1` 이 붙음. 어댑터가 둘이면 **어느 게
+어느 다리인지 매번 달라짐.**
+
+udev 규칙으로 고정함.
+
+```bash
+udevadm info -a -n /dev/ttyACM0 | grep -i serial    # 어댑터 시리얼 번호 확인
+```
+
+```
+# /etc/udev/rules.d/99-canable.rules
+SUBSYSTEM=="tty", ATTRS{idVendor}=="16d0", ATTRS{serial}=="<시리얼>", SYMLINK+="canable0"
+```
+
+키는 **시리얼 번호**로 잡을 것. VID/PID 로 잡으면 같은 모델 둘을 구분 못 함.
+
+### 네이티브 CAN (HAT, MCP2515)
+
+부팅할 때 커널 드라이버가 `canX` 를 이미 만들어 둠. 올리기만 하면 됨.
+
+```bash
+sudo ip link set can1 up type can bitrate 1000000
+```
+
+이쪽은 **커널이 비트타이밍을 들고 있어서** `ip link` 에 속도를 넘김.
+
+### 어느 쪽이든 확인은 같음
+
+```bash
+ip -details link show can1
+```
+
+`state UP` 이 보여야 함.
 
 ### 배선이 살아 있는지
 
@@ -198,23 +261,25 @@ ip -details link show can1                       # 확인
 candump can1        # 다른 터미널에서. 모터가 응답하면 프레임이 보임
 ```
 
-### 부팅할 때 자동으로
-
-```bash
-# /etc/network/interfaces.d/can1
-auto can1
-iface can1 can static
-    bitrate 1000000
-    up ip link set $IFACE txqueuelen 1000
-```
-
 ### 내릴 때
 
 ```bash
 sudo ip link set can1 down
+sudo pkill slcand          # USB 어댑터면 데몬도
 ```
 
 채널이 안 올라와 있으면 `connect()` 가 실패하고 이 명령을 알려줌.
+
+### 코드는 어느 쪽인지 모름
+
+`slcand` 가 만들었든 HAT 이 만들었든 **커널 입장에서 같은 socketcan 장치**임.
+
+```python
+CanBus("can1", interface="socketcan")
+```
+
+`config/robot.yaml` 에는 채널 이름만 있음. 어댑터를 바꿔도 설정은 그대로임 —
+달라지는 건 셸에서 채널 올리는 방법 하나뿐.
 
 ---
 
@@ -285,29 +350,62 @@ huphy-bringup --limb right_leg
 
 1~5 가 끝났다고 보고, 로봇 앞에서 하는 순서.
 
-```
-a  응답 확인       commission scan                6개 다 응답하나
-b  고장 확인       commission fault
-c  위치 확인       commission state               지금 어디 있나
-d  관절 매핑 확인   commission nudge <관절>         관절마다. 눈으로
-e  영점 잡기       commission zero <관절> --yes    관절마다
-f  가동 범위       commission sweep               손으로 밀어서
-g  실측값 채우기    calibration/*.json 을 손으로     sign, offset
-h  게인 튜닝       bringup                        그래프를 보며
+```bash
+# a  응답 확인 — 6개 다 응답하나
+huphy-commission --limb right_leg scan
+huphy-commission --limb right_leg fault
+
+# b  관절 매핑 확인 — 어느 모터가 어느 관절인지 눈으로. 관절마다
+huphy-commission --limb right_leg nudge hipz
+huphy-commission --limb right_leg nudge knee
+# ...
+
+# c  영점 — 다리를 기준 자세로 손으로 잡아 놓고, 관절 전부
+huphy-commission --limb right_leg zero hipz     --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero hipx     --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero hipy     --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero knee     --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero ankle_a1 --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero ankle_a2 --note "다리 편 상태, 발바닥 평면" --yes
+
+# d  가동 범위 — 전부 영점 잡은 뒤 한 번에
+huphy-commission --limb right_leg sweep
+
+# e  결과를 config/robot.yaml 의 limits_deg 에 붙임
+
+# f  게인 튜닝
+huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
 ```
 
-**f 가 e 뒤인 이유**: `sweep` 이 raw 공간으로 재는데 raw 는 영점에 매달려 있음.
-영점을 다시 잡으면 범위도 다시 재야 함.
+### b 가 중요함
 
-**d 가 중요함.** 설정에는 `7=hipz 8=hipx 9=hipy 10=knee 11=ankle_a1 12=ankle_a2`
-로 되어 있지만 실물로 확인된 적이 없음 ([이슈 #8](docs/issues.md)).
+설정에는 `7=hipz 8=hipx 9=hipy 10=knee 11=ankle_a1 12=ankle_a2` 로 되어 있지만
+**실물로 확인된 적이 없음** ([이슈 #8](docs/issues.md)).
 
 `nudge` 로 한 모터씩 움직여 어느 관절이 도는지 **눈으로** 봐야 함.
 
-**e 전에는 어느 자세가 0도인지 모름.** 영점을 안 잡으면 그 뒤가 전부 의미 없음.
+### c 전에는 어느 자세가 0도인지 모름
 
-다리를 원하는 자세로 손으로 잡아 놓고 하나씩 함. 그때 어떤 자세였는지를
-`--note` 에 적어야 나중에 재현할 수 있음.
+영점을 안 잡으면 그 뒤가 전부 의미 없음.
+
+다리를 원하는 자세로 손으로 잡아 놓고 **관절 전부**를 그 자세에서 잡음. 그때 어떤
+자세였는지를 `--note` 에 적어야 나중에 재현할 수 있음.
+
+### d 가 c 뒤인 이유
+
+`sweep` 이 재는 값은 **영점을 기준으로 한 각도**임. 영점을 다시 잡으면 범위도 다시
+재야 함.
+
+그래서 영점을 **전부 끝낸 뒤에** `sweep` 을 한 번 돌림.
+
+### sign 과 offset 은 손댈 일이 없음
+
+설계대로 조립했으면 `sign` 은 설계가 정한 값이고, 영점을 잡은 그 자리를 0으로
+받아들이면 `offset` 은 0임.
+
+**그 좌표계가 이 로봇의 좌표계임.** 한계도 그 좌표에서 쟀으므로 전부 일관됨.
+
+시뮬레이터의 관절 각도와 맞춰야 할 때만 두 값을 다시 봄.
 
 ### 각 단계에서 보는 것
 
@@ -326,6 +424,16 @@ h  게인 튜닝       bringup                        그래프를 보며
 최대    34.72   (움직인 양 +4.73)
 끝      30.23
 ```
+
+**`commission sweep`** — 토크를 끄고 손으로 미는 동안 최대·최소를 기록함. Enter 로 끝냄.
+
+```
+  관절                최소        지금        최대        범위
+  knee          -20.61     74.76     74.76     95.37
+```
+
+끝나면 `robot.yaml` 에 붙일 수 있는 형태로 냄. **파일을 고치지는 않음** — 주석이
+많은 파일이라 프로그램이 다시 쓰면 날아감.
 
 **`bringup`** — 그래프를 보며 게인을 찾음.
 
