@@ -49,6 +49,7 @@ from ..config import ConfigError, LimbConfig, load_robot
 from ..control import ControlLoop, Mode, motions
 from ..robots.leg import ANKLE_JOINTS, SINGLE_JOINTS, Leg
 from .bringup import build_leg
+from . import table
 from .commission import CONFIG_NAME, _find_config, _pick_limb
 
 logger = logging.getLogger("huphy.selftest")
@@ -300,7 +301,7 @@ def cmd_range(args, leg: Leg, loop: ControlLoop) -> int:
 
     print(f"\n{leg.id} 가동 범위 왕복 -- 주기 {args.period:.1f}초")
     print(f"  한계에서 {args.margin:.1f}도 안쪽까지만 감.\n")
-    print(f"  {'관절':<12} {'최소':>9} {'최대':>9}")
+    print("  " + table.header(("관절", 12, "<"), ("최소", 9), ("최대", 9)))
     for name, (lo, hi) in inset.items():
         print(f"  {name:<12} {lo:9.2f} {hi:9.2f}")
 

@@ -48,6 +48,7 @@ from ..motors.canbus import CanBus
 from ..motors.robstride import commissioning as C
 from ..motors.robstride import tables
 from ..motors.robstride.bus import RobStrideBus
+from . import table
 
 CONFIG_NAME = "config/robot.yaml"
 
@@ -329,11 +330,17 @@ def cmd_state(args, limb: LimbConfig, bus: RobStrideBus) -> int:
         calib = cal.attach(cal.load(limb.calibration_path), limb.motors)
 
     print(f"{limb.name}  {limb.channel}\n")
-    print(f"  {'관절':<10} {'raw':>9} {'cal':>9} {'속도':>9} {'토크':>8} {'온도':>6}")
+    print(
+        "  "
+        + table.header(
+            ("관절", 10, "<"), ("raw", 9), ("cal", 9), ("속도", 9), ("토크", 8),
+            ("온도", 6),
+        )
+    )
     for joint, motor in limb.motors.items():
         st = bus.state(motor.id)
         if not st.is_valid:
-            print(f"  {joint:<10} {'응답 없음':>9}")
+            print(f"  {joint:<10} {table.cell('응답 없음', 9)}")
             continue
         cal_deg = calib[motor.id].raw_to_cal(st.position_deg) if calib else st.position_deg
         print(
@@ -468,7 +475,12 @@ def _sweep_step(bus, limb, group, index, total, names, hz) -> dict:
     def show(results, positions):
         if lines[0]:
             print(f"\033[{lines[0]}A", end="")
-        out = [f"       {'관절':<10} {'최소':>9} {'지금':>9} {'최대':>9} {'범위':>9}"]
+        out = [
+            "       "
+            + table.header(
+                ("관절", 10, "<"), ("최소", 9), ("지금", 9), ("최대", 9), ("범위", 9)
+            )
+        ]
         for mid, r in results.items():
             now = positions.get(mid)
             now_text = f"{now:9.2f}" if now is not None else f"{'--':>9}"
@@ -517,7 +529,12 @@ def _sweep_report(limb: LimbConfig, results: dict, names: dict) -> int:
     cal.save(path, entries, limb=limb.name)
 
     print(f"\n  {path} 에 적었음:\n")
-    print(f"      {'관절':<10} {'최소':>9} {'최대':>9} {'범위':>9} {'오프셋':>9}")
+    print(
+        "      "
+        + table.header(
+            ("관절", 10, "<"), ("최소", 9), ("최대", 9), ("범위", 9), ("오프셋", 9)
+        )
+    )
     for mid, r in results.items():
         print(
             f"      {names[mid]:<10} {r.lo_deg:9.2f} {r.hi_deg:9.2f} "

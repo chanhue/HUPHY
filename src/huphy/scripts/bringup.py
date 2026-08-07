@@ -53,6 +53,7 @@ from ..motors.base import Gains
 from ..motors.canbus import CanBus
 from ..motors.robstride.bus import RobStrideBus
 from ..robots.leg import ANKLE_JOINTS, SINGLE_JOINTS, Leg
+from . import table
 from .commission import CONFIG_NAME, _find_config, _pick_limb
 
 logger = logging.getLogger(__name__)
@@ -115,8 +116,13 @@ def show_state(leg: Leg, loop: ControlLoop) -> None:
     link = leg.link_status()
 
     print(f"\n  {leg.id}  {leg.config.channel}\n")
-    print(f"  {'관절':<10} {'raw':>9} {'cal':>9} {'속도':>9} {'토크':>8} "
-          f"{'온도':>6} {'ack':>4} {'age(ms)':>9}")
+    print(
+        "  "
+        + table.header(
+            ("관절", 10, "<"), ("raw", 9), ("cal", 9), ("속도", 9), ("토크", 8),
+            ("온도", 6), ("ack", 4), ("age(ms)", 9),
+        )
+    )
     for name in leg.motor_names:
         raw = leg.bus.state(leg.config.motors[name].id).position_deg
         status = link.get(name, {})
