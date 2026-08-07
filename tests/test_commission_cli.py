@@ -8,6 +8,7 @@
 설정 파일은 임시 폴더에 만들어 씀 — 테스트가 저장소의 실제 파일을 건드리면 안 됨.
 """
 
+import argparse
 import json
 import math
 import sys
@@ -18,6 +19,7 @@ import pytest
 
 from huphy.motors.robstride import tables as T
 from huphy.motors.robstride.codec import mit
+from huphy.scripts import commission
 from huphy.scripts.commission import main
 
 MODELS = {10: T.Model.RS02, 11: T.Model.RS00}
@@ -379,3 +381,75 @@ class TestTargeting:
         with pytest.raises(SystemExit, match="모르는 키"):
             main(["--config", str(p), "scan"])
         assert FakeBus.instances == []
+
+
+# ===========================================================================
+# 옵션 고르기
+# ===========================================================================
+def _args(command, **given):
+    """서브명령이 만들 이름공간. 안 준 옵션은 None 임."""
+    fields = {o.name: None for o in commission.OPTIONS[command]}
+    fields.update(given)
+    return argparse.Namespace(command=command, joint="knee", **fields)
+
+
+class TestOptions:
+    def test_missing_options_take_the_default(self):
+        """플래그를 하나도 안 줘도 굴러가야 함. 기본값 출처는 OPTIONS 하나뿐임."""
+        args = _args("nudge")
+        commission.choose_options("nudge", args, asked=False)
+        assert (args.delta, args.kp, args.kd) == (5.0, 5.0, 0.5)
+
+    def test_given_options_survive(self):
+        args = _args("nudge", delta=12.0)
+        commission.choose_options("nudge", args, asked=False)
+        assert args.delta == 12.0 and args.kp == 5.0
+
+    def test_required_option_is_refused_when_absent(self):
+        """어느 자세에서 영점을 잡았는지는 대신 정해 줄 수 없음."""
+        with pytest.raises(SystemExit, match="--note 을 지정할 것"):
+            commission.choose_options("zero", _args("zero"), asked=False)
+
+    def test_choices_are_checked(self):
+        args = _args("protocol", to="usb")
+        with pytest.raises(SystemExit, match="--to 은"):
+            commission.choose_options("protocol", args, asked=False)
+
+    def test_comma_line_fills_in_order(self):
+        """표시 순서가 곧 쉼표 순서임."""
+        args = _args("nudge")
+        commission._apply_options(commission.OPTIONS["nudge"], args, "3, 8, 1.0")
+        assert (args.delta, args.kp, args.kd) == (3.0, 8.0, 1.0)
+
+    def test_blank_slot_keeps_the_default(self):
+        args = _args("nudge")
+        commission._apply_options(commission.OPTIONS["nudge"], args, "3, , 1.0")
+        commission.choose_options("nudge", args, asked=False)
+        assert (args.delta, args.kp, args.kd) == (3.0, 5.0, 1.0)
+
+    def test_single_option_takes_the_whole_line(self):
+        """메모에 쉼표가 들어감. 나누면 뒷부분이 잘림."""
+        args = _args("zero")
+        commission._apply_options(commission.OPTIONS["zero"], args, "다리 편 상태, 발바닥 접촉")
+        assert args.note == "다리 편 상태, 발바닥 접촉"
+
+    def test_too_many_values_is_refused(self):
+        with pytest.raises(SystemExit, match="옵션은 3개인데 4개를 받음"):
+            commission._apply_options(commission.OPTIONS["nudge"], _args("nudge"), "1,2,3,4")
+
+    def test_unreadable_value_says_which_option(self):
+        with pytest.raises(SystemExit, match="delta 값을 읽지 못함"):
+            commission._apply_options(commission.OPTIONS["nudge"], _args("nudge"), "많이")
+
+    def test_nothing_is_asked_when_the_joint_was_named(self, monkeypatch):
+        """관절을 명령줄에 적었으면 플래그로 다 지정한 것으로 봄. 화면이어도 안 물음."""
+        monkeypatch.setattr(commission.sys.stdin, "isatty", lambda: True, raising=False)
+        monkeypatch.setattr("builtins.input", lambda p="": pytest.fail("물어보면 안 됨"))
+        commission.choose_options("nudge", _args("nudge"), asked=False)
+
+    def test_nothing_is_asked_off_screen(self, monkeypatch):
+        """파이프·스크립트에서는 물어볼 수 없음. 기본값으로 감."""
+        monkeypatch.setattr("builtins.input", lambda p="": pytest.fail("물어보면 안 됨"))
+        args = _args("nudge")
+        commission.choose_options("nudge", args, asked=True)
+        assert args.delta == 5.0

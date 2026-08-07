@@ -10,7 +10,7 @@ tests/
 ├── test_commissioning.py   robstride/commissioning.py  39개
 ├── test_config.py          config/                     45개
 ├── test_calibration.py     calibration/                35개
-├── test_commission_cli.py  scripts/commission.py       30개
+├── test_commission_cli.py  scripts/commission.py       46개
 ├── test_ankle.py           kinematics/ankle.py        149개
 ├── test_leg.py             robots/leg.py               42개
 ├── test_telemetry.py       telemetry/                  43개
@@ -27,7 +27,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-648 passed in 11.1s
+664 passed in 11.5s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -159,7 +159,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestAttach` | 6 | 모터 id 재키잉, 관절 이름 불일치 |
 | `TestUnmeasured` | 5 | 메모 기준 판정 |
 
-### `test_commission_cli.py` — 30개
+### `test_commission_cli.py` — 46개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -169,7 +169,8 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestNudge` | 5 | 왕복, 안 움직임 경고, 진폭 상한 |
 | `TestDangerous` | 6 | `--yes` 요구, 승인 전 무전송 |
 | `TestZero` | 4 | 메모 저장, 토크 차단 순서 |
-| `TestTargeting` | 5 | `--limb` 요구, 설정 오류가 버스보다 먼저 |
+| `TestTargeting` | 7 | `--limb` 요구, 관절 생략, 설정 오류가 버스보다 먼저 |
+| `TestOptions` | 10 | 기본값 출처, 쉼표 한 줄, 필수 값 거부 |
 
 ### `test_ankle.py` — 149개
 

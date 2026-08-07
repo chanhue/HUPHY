@@ -36,8 +36,9 @@ import argparse
 import logging
 import select
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .. import calibration as cal
 from ..config import ConfigError, LimbConfig, load_robot
@@ -149,6 +150,139 @@ def choose_joints(
     raise SystemExit(f"{raw!r} 는 고를 수 없음 (가용: {names})")
 
 
+# ===========================================================================
+# 옵션 고르기
+# ===========================================================================
+@dataclass(frozen=True)
+class Option:
+    """대화형으로 받을 수 있는 옵션 하나.
+
+    `default` 가 `None` 이면 **반드시 받아야 하는 값**임 -- 대신 정해 줄 수 없는 것들
+    (어느 자세에서 영점을 잡았는지, 어느 번호로 바꿀지) 이 여기에 해당함.
+    """
+
+    name: str
+    default: Any
+    parse: Callable[[str], Any]
+    note: str
+    choices: Tuple[str, ...] = ()
+
+    def shown(self) -> str:
+        return "(필수)" if self.default is None else str(self.default)
+
+
+OPTIONS: Dict[str, Tuple[Option, ...]] = {
+    "nudge": (
+        Option("delta", 5.0, float, "몇 도 움직였다 되돌릴지. 20도까지"),
+        Option("kp", 5.0, float, "위치 게인. 안 움직이면 조금씩 올릴 것"),
+        Option("kd", 0.5, float, "속도 게인"),
+    ),
+    "sweep": (Option("hz", 20.0, float, "몇 번 재는지. 초당"),),
+    "zero": (Option("note", None, str, "어느 자세에서 잡는지. 나중에 재현하려면 필요함"),),
+    "mode": (
+        Option(
+            "to",
+            "mit",
+            str,
+            "제어 모드",
+            tuple(x.name.lower() for x in tables.ControlMode),
+        ),
+    ),
+    "can-id": (Option("to", None, int, "바꿀 CAN id. 1..127"),),
+    "protocol": (
+        Option(
+            "to",
+            None,
+            str,
+            "프레임 포맷. 바꾸면 전원 재투입이 필요함",
+            tuple(x.name.lower() for x in tables.Protocol),
+        ),
+    ),
+}
+"""명령별 옵션 목록. 표시 순서가 곧 쉼표 순서임.
+
+여기 적힌 것이 **기본값의 유일한 출처**임. argparse 쪽 기본값은 `None` 으로 두어
+"안 줬음" 과 "기본값을 줬음" 을 구분함 -- 안 준 것만 물어보기 위함임.
+"""
+
+
+def choose_options(command: str, args, *, asked: bool) -> None:
+    """빠진 옵션을 채움. 대화형이면 **한 줄로 몰아서** 받음.
+
+    관절을 명령줄에 적었으면(`asked` 가 거짓) 플래그로 다 지정한 것으로 보고 묻지
+    않음. 관절을 생략해 목록에서 고른 경우에만, 이어서 옵션도 한 번에 보여주고 받음.
+
+    입력은 쉼표로 나눔. 빈 칸은 기본값임. 옵션이 하나뿐인 명령(`zero --note` 등)은
+    쉼표로 나누지 않고 줄 전체를 값으로 씀 -- 메모에 쉼표가 들어가기 때문임.
+    """
+    options = OPTIONS.get(command, ())
+    if not options:
+        return
+
+    missing = [o for o in options if getattr(args, o.name, None) is None]
+
+    if missing and asked and sys.stdin.isatty():
+        print(f"\n  옵션 -- 쉼표로 구분, 비우면 기본값\n")
+        for index, option in enumerate(options, start=1):
+            tail = f"  {'/'.join(option.choices)}" if option.choices else ""
+            print(f"    {index}) {option.name:<7} {option.shown():<8} {option.note}{tail}")
+        print()
+
+        line = ", ".join(o.shown() for o in options)
+        raw = input(f"  입력 [{line}]: ").strip()
+        if raw:
+            _apply_options(options, args, raw)
+
+    for option in options:
+        if getattr(args, option.name, None) is not None:
+            continue
+        if option.default is None:
+            raise SystemExit(
+                f"--{option.name} 을 지정할 것 ({option.note})"
+            )
+        setattr(args, option.name, option.default)
+
+    for option in options:
+        value = getattr(args, option.name)
+        if option.choices and str(value).lower() not in option.choices:
+            raise SystemExit(
+                f"--{option.name} 은 {list(option.choices)} 중 하나여야 함 (받은 값: {value!r})"
+            )
+
+
+def _apply_options(options: Tuple[Option, ...], args, raw: str) -> None:
+    """한 줄로 받은 답을 인자에 옮김."""
+    if len(options) == 1:
+        tokens = [raw]
+    else:
+        tokens = [t.strip() for t in raw.split(",")]
+        if len(tokens) > len(options):
+            raise SystemExit(
+                f"옵션은 {len(options)}개인데 {len(tokens)}개를 받음: {raw!r}"
+            )
+
+    for token, option in zip(tokens, options):
+        if not token:
+            continue
+        try:
+            setattr(args, option.name, option.parse(token))
+        except ValueError as e:
+            raise SystemExit(f"{option.name} 값을 읽지 못함: {token!r} ({e})") from e
+
+
+def echo_command(limb: LimbConfig, command: str, joint: str, args) -> None:
+    """방금 고른 것을 명령줄 형태로 냄. 다음부터는 이대로 바로 칠 수 있음."""
+    head = f"huphy-commission --limb {limb.name} {command}"
+    parts = [f"{head} {joint}" if joint else head]
+    for option in OPTIONS.get(command, ()):
+        value = getattr(args, option.name)
+        text = f'"{value}"' if isinstance(value, str) and " " in value else value
+        parts.append(f"--{option.name} {text}")
+    if getattr(args, "yes", False):
+        parts.append("--yes")
+    print(f"\n  실행: {' '.join(str(p) for p in parts)}\n")
+
+
 def _open(limb: LimbConfig) -> RobStrideBus:
     bus = RobStrideBus(
         CanBus(limb.channel, interface=limb.interface), limb.motors_by_id()
@@ -254,7 +388,11 @@ def _enter_pressed() -> bool:
 
 def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     """토크를 끄고 손으로 미는 동안 가동 범위를 기록함."""
+    asked = args.joint is None
     joints = choose_joints(limb, args.joint, allow_all=True, what="잴까요")
+    choose_options(args.command, args, asked=asked)
+    if asked:
+        echo_command(limb, args.command, args.joint or "", args)
     ids = [limb.motors[j].id for j in joints]
     names = {motor.id: name for name, motor in limb.motors.items()}
 
@@ -282,7 +420,9 @@ def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
         print("\n".join(out))
         lines[0] = len(out)
 
-    results = C.sweep(bus, ids, should_stop=lambda: _enter_pressed(), on_update=show)
+    results = C.sweep(
+        bus, ids, should_stop=lambda: _enter_pressed(), on_update=show, hz=args.hz
+    )
 
     print(f"\n  robot.yaml 의 {limb.name}.motors 에 적을 것 (raw 공간):\n")
     for mid, r in results.items():
@@ -306,9 +446,13 @@ def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
 
 def cmd_nudge(args, limb: LimbConfig, bus: RobStrideBus) -> int:
+    asked = args.joint is None
     joint = choose_joints(limb, args.joint, allow_all=False, what="움직일까요")[0]
+    choose_options(args.command, args, asked=asked)
     args.joint = joint
     motor_id = limb.motors[joint].id
+    if asked:
+        echo_command(limb, args.command, joint, args)
     print(
         f"{limb.name}.{args.joint} (id={motor_id}) 를 {args.delta:+.1f}도 움직였다 되돌림.\n"
         f"  게인 kp={args.kp} kd={args.kd}\n"
@@ -336,7 +480,11 @@ def cmd_zero(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     관절 이름을 생략하면 **전부** 잡음. 토크가 꺼진 상태로 자세를 유지해야 하는데,
     명령을 여섯 번 나눠 치면 그동안 다리가 무너짐.
     """
+    asked = args.joint is None
     joints = choose_joints(limb, args.joint, allow_all=True, what="영점 잡을까요")
+    choose_options(args.command, args, asked=asked)
+    if asked:
+        echo_command(limb, args.command, args.joint or "", args)
 
     print(f"\n{limb.name} 영점: {', '.join(joints)}")
     print(f'  자세: "{args.note}"\n')
@@ -383,8 +531,12 @@ def cmd_zero(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
 
 def cmd_mode(args, limb: LimbConfig, bus: RobStrideBus) -> int:
-    mode = tables.ControlMode[args.to.upper()]
+    asked = args.joint is None
     args.joint = choose_joints(limb, args.joint, allow_all=False, what="바꿀까요")[0]
+    choose_options(args.command, args, asked=asked)
+    if asked:
+        echo_command(limb, args.command, args.joint, args)
+    mode = tables.ControlMode[args.to.upper()]
     motor_id = limb.motors[args.joint].id
     C.set_control_mode(bus, motor_id, mode)
     print(f"{limb.name}.{args.joint} 제어 모드 -> {mode.name}")
@@ -392,7 +544,11 @@ def cmd_mode(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
 
 def cmd_can_id(args, limb: LimbConfig, bus: RobStrideBus) -> int:
+    asked = args.joint is None
     args.joint = choose_joints(limb, args.joint, allow_all=False, what="바꿀까요")[0]
+    choose_options(args.command, args, asked=asked)
+    if asked:
+        echo_command(limb, args.command, args.joint, args)
     motor_id = limb.motors[args.joint].id
     C.set_can_id(bus, motor_id, args.to)
     print(
@@ -403,8 +559,12 @@ def cmd_can_id(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
 
 def cmd_protocol(args, limb: LimbConfig, bus: RobStrideBus) -> int:
-    protocol = tables.Protocol[args.to.upper()]
+    asked = args.joint is None
     args.joint = choose_joints(limb, args.joint, allow_all=False, what="바꿀까요")[0]
+    choose_options(args.command, args, asked=asked)
+    if asked:
+        echo_command(limb, args.command, args.joint, args)
+    protocol = tables.Protocol[args.to.upper()]
     motor_id = limb.motors[args.joint].id
     C.set_protocol(bus, motor_id, protocol)
     print(
@@ -447,30 +607,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("sweep", help="토크를 끄고 손으로 밀어 가동 범위 측정")
     s.add_argument("joint", nargs="?", help="생략하면 물어봄 (기본 전부)")
+    s.add_argument("--hz", type=float, help="기본 20")
 
     n = sub.add_parser("nudge", help="조금 움직였다 되돌림. 어느 관절인지 확인용")
     n.add_argument("joint", nargs="?", help="생략하면 물어봄")
-    n.add_argument("--delta", type=float, default=5.0, help="기본 5도, 최대 20도")
-    n.add_argument("--kp", type=float, default=5.0)
-    n.add_argument("--kd", type=float, default=0.5)
+    n.add_argument("--delta", type=float, help="기본 5도, 최대 20도")
+    n.add_argument("--kp", type=float, help="기본 5.0")
+    n.add_argument("--kd", type=float, help="기본 0.5")
 
     z = sub.add_parser("zero", help="[영구] 지금 자세를 기계 영점으로")
     z.add_argument("joint", nargs="?", help="생략하면 물어봄 (기본 전부)")
-    z.add_argument("--note", required=True, help="어느 자세에서 잡는지. 나중에 재현하려면 필요함")
+    z.add_argument("--note", help="어느 자세에서 잡는지. 나중에 재현하려면 필요함")
     z.add_argument("--yes", action="store_true", help=YES_HELP)
 
     m = sub.add_parser("mode", help="제어 모드 변경")
     m.add_argument("joint", nargs="?", help="생략하면 물어봄")
-    m.add_argument("--to", default="mit", choices=[x.name.lower() for x in tables.ControlMode])
+    m.add_argument("--to", choices=[x.name.lower() for x in tables.ControlMode], help="기본 mit")
 
     i = sub.add_parser("can-id", help="[영구] CAN id 변경")
     i.add_argument("joint", nargs="?", help="생략하면 물어봄")
-    i.add_argument("--to", type=int, required=True)
+    i.add_argument("--to", type=int, help="바꿀 CAN id. 생략하면 물어봄")
     i.add_argument("--yes", action="store_true", help=YES_HELP)
 
     pr = sub.add_parser("protocol", help="[영구] 프로토콜 전환. 전원 재투입 필요")
     pr.add_argument("joint", nargs="?", help="생략하면 물어봄")
-    pr.add_argument("--to", default="mit", choices=[x.name.lower() for x in tables.Protocol])
+    pr.add_argument("--to", choices=[x.name.lower() for x in tables.Protocol], help="생략하면 물어봄")
     pr.add_argument("--yes", action="store_true", help=YES_HELP)
 
     return p
