@@ -13,8 +13,8 @@
 - [2. 모터 설정](#2-모터-설정)
 - [3. 환경 만들기](#3-환경-만들기)
 - [4. CAN 채널 올리기](#4-can-채널-올리기)
-- [5. 명령어](#5-명령어)
-- [6. 처음 브링업 순서](#6-처음-브링업-순서)
+- [5. 처음 브링업 순서](#5-처음-브링업-순서) — **여기까지가 세팅**
+- [6. 명령어 목록](#6-명령어-목록) — 참조
 - [조정해야 할 값](#조정해야-할-값)
 - [지금 무엇이 비어 있나](#지금-무엇이-비어-있나)
 - [계층 구조](#계층-구조)
@@ -283,11 +283,117 @@ CanBus("can1", interface="socketcan")
 
 ---
 
-## 5. 명령어
+## 5. 처음 브링업 순서
+
+1~4 가 끝났다고 보고, 로봇 앞에서 하는 순서.
+
+각 명령이 무엇인지는 [6번](#6-명령어-목록).
+
+```bash
+# a  응답 확인 — 6개 다 응답하나
+huphy-commission --limb right_leg scan
+huphy-commission --limb right_leg fault
+
+# b  관절 매핑 확인 — 어느 모터가 어느 관절인지 눈으로. 관절마다
+huphy-commission --limb right_leg nudge hipz
+huphy-commission --limb right_leg nudge knee
+# ...
+
+# c  영점 — 다리를 기준 자세로 손으로 잡아 놓고, 관절 전부
+huphy-commission --limb right_leg zero hipz     --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero hipx     --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero hipy     --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero knee     --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero ankle_a1 --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero ankle_a2 --note "다리 편 상태, 발바닥 평면" --yes
+
+# d  가동 범위 — 전부 영점 잡은 뒤 한 번에
+huphy-commission --limb right_leg sweep
+
+# e  결과를 config/robot.yaml 의 limits_deg 에 붙임
+
+# f  게인 튜닝
+huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
+```
+
+### b 가 중요함
+
+설정에는 `7=hipz 8=hipx 9=hipy 10=knee 11=ankle_a1 12=ankle_a2` 로 되어 있지만
+**실물로 확인된 적이 없음** ([이슈 #8](docs/issues.md)).
+
+`nudge` 로 한 모터씩 움직여 어느 관절이 도는지 **눈으로** 봐야 함.
+
+### c 전에는 어느 자세가 0도인지 모름
+
+영점을 안 잡으면 그 뒤가 전부 의미 없음.
+
+다리를 원하는 자세로 손으로 잡아 놓고 **관절 전부**를 그 자세에서 잡음. 그때 어떤
+자세였는지를 `--note` 에 적어야 나중에 재현할 수 있음.
+
+### d 가 c 뒤인 이유
+
+`sweep` 이 재는 값은 **영점을 기준으로 한 각도**임. 영점을 다시 잡으면 범위도 다시
+재야 함.
+
+그래서 영점을 **전부 끝낸 뒤에** `sweep` 을 한 번 돌림.
+
+### sign 과 offset 은 손댈 일이 없음
+
+설계대로 조립했으면 `sign` 은 설계가 정한 값이고, 영점을 잡은 그 자리를 0으로
+받아들이면 `offset` 은 0임.
+
+**그 좌표계가 이 로봇의 좌표계임.** 한계도 그 좌표에서 쟀으므로 전부 일관됨.
+
+시뮬레이터의 관절 각도와 맞춰야 할 때만 두 값을 다시 봄.
+
+### 무엇을 보나
+
+**`commission scan`** — 응답 없는 모터가 있으면 원인 후보를 같이 냄.
+
+```
+응답 없음: ['ankle_a2']
+  배선, 전원, CAN id, 프로토콜 모드가 후보임.
+  이 넷은 여기서 구분되지 않음 -- 전부 조용히 빠짐.
+```
+
+**`commission nudge knee`** — 명령한 만큼 안 움직이면 알려줌.
+
+```
+시작    29.99
+최대    34.72   (움직인 양 +4.73)
+끝      30.23
+```
+
+**`commission sweep`** — 토크를 끄고 손으로 미는 동안 최대·최소를 기록함. Enter 로 끝냄.
+
+```
+  관절                최소        지금        최대        범위
+  knee          -20.61     74.76     74.76     95.37
+```
+
+끝나면 `robot.yaml` 에 붙일 수 있는 형태로 냄. **파일을 고치지는 않음** — 주석이
+많은 파일이라 프로그램이 다시 쓰면 날아감.
+
+**`bringup`** — 그래프를 보며 게인을 찾음.
+
+```
+1  loop_dt 부터 확인      주기를 못 지키면 게인 문제가 아님
+2  자세 유지              처지나, 떨리나
+3  계단 응답              여기서 대부분이 결정됨
+4  사인파                 추종 지연과 진폭 감쇠
+```
+
+찾은 값은 `config/robot.yaml` 의 `kp`/`kd` 에 적음. 무엇을 보고 어떻게 판단하는지는
+[`control/README.md`](src/huphy/control/README.md) 와
+[`docs/monitoring.md`](docs/monitoring.md).
+
+---
+
+## 6. 명령어 목록
 
 ### 커미셔닝 — 조립할 때 한 번
 
-**목록임. 실제로 치는 순서는 [6번](#6-처음-브링업-순서).**
+**참조용 목록임. 실제로 치는 순서는 [5번](#5-처음-브링업-순서).**
 
 #### 읽기만 함 — 아무것도 안 움직임
 
@@ -406,110 +512,6 @@ huphy-bringup --limb right_leg
 --config <경로>    기본값: 위로 올라가며 config/robot.yaml 을 찾음
 -v                 자세한 로그
 ```
-
----
-
-## 6. 처음 브링업 순서
-
-1~5 가 끝났다고 보고, 로봇 앞에서 하는 순서.
-
-```bash
-# a  응답 확인 — 6개 다 응답하나
-huphy-commission --limb right_leg scan
-huphy-commission --limb right_leg fault
-
-# b  관절 매핑 확인 — 어느 모터가 어느 관절인지 눈으로. 관절마다
-huphy-commission --limb right_leg nudge hipz
-huphy-commission --limb right_leg nudge knee
-# ...
-
-# c  영점 — 다리를 기준 자세로 손으로 잡아 놓고, 관절 전부
-huphy-commission --limb right_leg zero hipz     --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero hipx     --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero hipy     --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero knee     --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero ankle_a1 --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero ankle_a2 --note "다리 편 상태, 발바닥 평면" --yes
-
-# d  가동 범위 — 전부 영점 잡은 뒤 한 번에
-huphy-commission --limb right_leg sweep
-
-# e  결과를 config/robot.yaml 의 limits_deg 에 붙임
-
-# f  게인 튜닝
-huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
-```
-
-### b 가 중요함
-
-설정에는 `7=hipz 8=hipx 9=hipy 10=knee 11=ankle_a1 12=ankle_a2` 로 되어 있지만
-**실물로 확인된 적이 없음** ([이슈 #8](docs/issues.md)).
-
-`nudge` 로 한 모터씩 움직여 어느 관절이 도는지 **눈으로** 봐야 함.
-
-### c 전에는 어느 자세가 0도인지 모름
-
-영점을 안 잡으면 그 뒤가 전부 의미 없음.
-
-다리를 원하는 자세로 손으로 잡아 놓고 **관절 전부**를 그 자세에서 잡음. 그때 어떤
-자세였는지를 `--note` 에 적어야 나중에 재현할 수 있음.
-
-### d 가 c 뒤인 이유
-
-`sweep` 이 재는 값은 **영점을 기준으로 한 각도**임. 영점을 다시 잡으면 범위도 다시
-재야 함.
-
-그래서 영점을 **전부 끝낸 뒤에** `sweep` 을 한 번 돌림.
-
-### sign 과 offset 은 손댈 일이 없음
-
-설계대로 조립했으면 `sign` 은 설계가 정한 값이고, 영점을 잡은 그 자리를 0으로
-받아들이면 `offset` 은 0임.
-
-**그 좌표계가 이 로봇의 좌표계임.** 한계도 그 좌표에서 쟀으므로 전부 일관됨.
-
-시뮬레이터의 관절 각도와 맞춰야 할 때만 두 값을 다시 봄.
-
-### 각 단계에서 보는 것
-
-**`commission scan`** — 응답 없는 모터가 있으면 원인 후보를 같이 냄.
-
-```
-응답 없음: ['ankle_a2']
-  배선, 전원, CAN id, 프로토콜 모드가 후보임.
-  이 넷은 여기서 구분되지 않음 -- 전부 조용히 빠짐.
-```
-
-**`commission nudge knee`** — 명령한 만큼 안 움직이면 알려줌.
-
-```
-시작    29.99
-최대    34.72   (움직인 양 +4.73)
-끝      30.23
-```
-
-**`commission sweep`** — 토크를 끄고 손으로 미는 동안 최대·최소를 기록함. Enter 로 끝냄.
-
-```
-  관절                최소        지금        최대        범위
-  knee          -20.61     74.76     74.76     95.37
-```
-
-끝나면 `robot.yaml` 에 붙일 수 있는 형태로 냄. **파일을 고치지는 않음** — 주석이
-많은 파일이라 프로그램이 다시 쓰면 날아감.
-
-**`bringup`** — 그래프를 보며 게인을 찾음.
-
-```
-1  loop_dt 부터 확인      주기를 못 지키면 게인 문제가 아님
-2  자세 유지              처지나, 떨리나
-3  계단 응답              여기서 대부분이 결정됨
-4  사인파                 추종 지연과 진폭 감쇠
-```
-
-찾은 값은 `config/robot.yaml` 의 `kp`/`kd` 에 적음. 무엇을 보고 어떻게 판단하는지는
-[`control/README.md`](src/huphy/control/README.md) 와
-[`docs/monitoring.md`](docs/monitoring.md).
 
 ---
 
