@@ -453,3 +453,35 @@ class TestOptions:
         args = _args("nudge")
         commission.choose_options("nudge", args, asked=True)
         assert args.delta == 5.0
+
+
+# ===========================================================================
+# sweep 단계 나누기
+# ===========================================================================
+class TestSweepSteps:
+    def test_lone_joints_are_one_step_each(self):
+        assert commission._steps(["hipz", "knee"]) == [["hipz"], ["knee"]]
+
+    def test_ankle_motors_share_a_step(self):
+        """로드로 발판에 물려 있어 한쪽만 손으로 돌릴 수 없음."""
+        assert commission._steps(["ankle_a1", "ankle_a2"]) == [["ankle_a1", "ankle_a2"]]
+
+    def test_order_follows_the_joint_list(self):
+        steps = commission._steps(["hipz", "ankle_a1", "knee", "ankle_a2"])
+        assert steps == [["hipz"], ["ankle_a1", "ankle_a2"], ["knee"]]
+
+    def test_half_a_pair_stands_alone(self):
+        """한쪽만 골랐으면 그 하나만 잼."""
+        assert commission._steps(["ankle_a2"]) == [["ankle_a2"]]
+
+    def test_every_joint_appears_once(self):
+        joints = ["hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"]
+        flat = [j for step in commission._steps(joints) for j in step]
+        assert sorted(flat) == sorted(joints)
+
+
+class TestSweepNeedsAScreen:
+    def test_refused_off_screen(self, run):
+        """단계마다 Enter 를 받음. 파이프에서는 받을 데가 없음."""
+        with pytest.raises(SystemExit, match="화면에서 실행할 것"):
+            run("--limb", "right_leg", "sweep", "knee")

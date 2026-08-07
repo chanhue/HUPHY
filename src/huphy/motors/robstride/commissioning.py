@@ -277,10 +277,42 @@ class SweepResult:
     lo_deg: float
     hi_deg: float
     samples: int
+    offset_deg: float = 0.0
 
     @property
     def span_deg(self) -> float:
         return self.hi_deg - self.lo_deg
+
+
+def measure_offset(
+    bus: RobStrideBus, motors: Optional[Iterable[int]] = None
+) -> Dict[int, float]:
+    """**지금 자세를 관절 0도로 놓는** 오프셋을 냄.
+
+    `cal = sign x raw + offset` 이고 설계대로 조립하면 `sign` 이 1 이므로,
+    지금 각도가 0으로 읽히려면 `offset = -raw` 임.
+
+    기계 영점(`set_zero`)과 다른 것임 -- 그쪽은 모터가 각도를 **어디부터 세는지**를
+    정하고, 이쪽은 그렇게 센 각도 중 **어디를 관절 0도라 부를지**를 정함. 영점을
+    제대로 잡았으면 여기서 0 근처가 나옴. 그것이 곧 확인임.
+
+    토크를 끊고 부름 -- 사람이 자세를 잡고 있는 중임.
+    """
+    ids = resolve_motor_list(motors, bus.motor_ids)
+    bus.disable_torque(ids)
+
+    missing = bus.refresh_states(ids)
+    if missing:
+        raise CommissioningError(
+            f"응답이 없음: {missing}. 배선과 CAN id 를 확인할 것"
+        )
+
+    offsets = {mid: -bus.state(mid).position_deg for mid in ids}
+    logger.info(
+        "관절 0도 기준: %s",
+        ", ".join(f"m{mid} offset {value:+.2f}" for mid, value in offsets.items()),
+    )
+    return offsets
 
 
 def sweep(
@@ -290,6 +322,7 @@ def sweep(
     should_stop: Callable[[], bool],
     on_update: Optional[Callable[[Dict[int, "SweepResult"], Dict[int, float]], None]] = None,
     hz: float = 20.0,
+    offsets: Optional[Dict[int, float]] = None,
 ) -> Dict[int, SweepResult]:
     """토크를 끄고 **사람이 손으로 미는 동안** 최대·최소를 기록함.
 
@@ -300,8 +333,18 @@ def sweep(
 
     `should_stop` 이 `True` 를 낼 때까지 돎. 호출부가 키 입력이나 시간으로 정함.
 
-    반환: 모터 id -> `SweepResult`. 각도는 **raw 공간**임 -- 캘리브레이션 전에도
-    쓸 수 있어야 하기 때문임.
+    반환: 모터 id -> `SweepResult`.
+
+
+    ## 각도는 관절 좌표계임
+
+    `offsets` 를 받아 `cal = raw + offset` 으로 바꿔 기록함. `measure_offset` 이
+    관절 0도 자세에서 낸 값을 그대로 넣으면 됨.
+
+    **0도를 먼저 정하고 범위를 재는 순서임.** 그래야 나온 최대·최소가 그대로
+    `robot.yaml` 의 `limits_deg` 가 됨 -- 나중에 빼고 더할 일이 없음.
+
+    `offsets` 를 생략하면 0으로 봄. 그때는 raw 공간 값임.
 
 
     ## 값이 사람 손에 달려 있음
@@ -322,6 +365,7 @@ def sweep(
     시작하므로 문제되지 않음.
     """
     ids = resolve_motor_list(motors, bus.motor_ids)
+    shift = dict(offsets or {})
     bus.disable_torque(ids)
 
     missing = bus.refresh_states(ids)
@@ -330,15 +374,16 @@ def sweep(
             f"응답이 없음: {missing}. 배선과 CAN id 를 확인할 것"
         )
 
-    results = {
-        mid: SweepResult(
+    results = {}
+    for mid in ids:
+        start = bus.state(mid).position_deg + shift.get(mid, 0.0)
+        results[mid] = SweepResult(
             motor_id=mid,
-            lo_deg=bus.state(mid).position_deg,
-            hi_deg=bus.state(mid).position_deg,
+            lo_deg=start,
+            hi_deg=start,
             samples=0,
+            offset_deg=shift.get(mid, 0.0),
         )
-        for mid in ids
-    }
 
     dt = 1.0 / float(hz)
     while not should_stop():
@@ -348,14 +393,15 @@ def sweep(
             state = bus.state(mid)
             if not state.is_valid:
                 continue
-            position = state.position_deg
-            positions[mid] = position
             entry = results[mid]
+            position = state.position_deg + entry.offset_deg
+            positions[mid] = position
             results[mid] = SweepResult(
                 motor_id=mid,
                 lo_deg=min(entry.lo_deg, position),
                 hi_deg=max(entry.hi_deg, position),
                 samples=entry.samples + 1,
+                offset_deg=entry.offset_deg,
             )
         if on_update is not None:
             on_update(results, positions)

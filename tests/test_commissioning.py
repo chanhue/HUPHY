@@ -410,6 +410,64 @@ class TestSweep:
         with pytest.raises(C.CommissioningError, match="배선과 CAN id"):
             C.sweep(leg, should_stop=lambda: True)
 
+    def test_offsets_move_the_recorded_range(self, leg, live):
+        """0도를 먼저 정하므로 나온 값이 곧 관절 좌표계 각도임."""
+        positions = [0.0, 30.0, -20.0]
+        step = {"i": 0}
+
+        def moving_send(msg):
+            live.sent.append(msg)
+            mid = msg.arbitration_id
+            index = min(step["i"], len(positions) - 1)
+            live.rx.append(state_frame(mid, positions[index], model=MODELS_BY_ID[mid]))
+
+        live.send = moving_send
+
+        def should_stop():
+            step["i"] += 1
+            return step["i"] > len(positions)
+
+        results = C.sweep(
+            leg, [10], should_stop=should_stop, hz=10000.0, offsets={10: 12.0}
+        )
+        assert results[10].offset_deg == 12.0
+        assert results[10].lo_deg == pytest.approx(-8.0, abs=0.05)
+        assert results[10].hi_deg == pytest.approx(42.0, abs=0.05)
+        assert results[10].span_deg == pytest.approx(50.0, abs=0.1)
+
+    def test_no_offset_means_raw(self, leg, live):
+        """오프셋을 안 주면 raw 그대로임. 캘리브레이션 전에도 쓸 수 있어야 함."""
+        results = C.sweep(leg, [10], should_stop=lambda: True)
+        assert results[10].offset_deg == 0.0
+
+
+class TestMeasureOffset:
+    """지금 자세를 관절 0도로 놓는 값을 냄. `sweep` 이 단계마다 부름."""
+
+    def test_current_pose_becomes_zero(self, leg, live):
+        """cal = raw + offset 이므로 지금 각도가 0으로 읽히려면 offset = -raw 임."""
+        live.send = lambda msg: live.rx.append(
+            state_frame(msg.arbitration_id, 33.4, model=MODELS_BY_ID[msg.arbitration_id])
+        )
+        offsets = C.measure_offset(leg, [10])
+        assert offsets[10] == pytest.approx(-33.4, abs=0.05)
+
+    def test_cuts_torque_first(self, leg, live):
+        """사람이 자세를 잡고 있는 중임. 힘이 들어가 있으면 그 자세가 아님."""
+        leg.enable_torque()
+        live.sent.clear()
+        C.measure_offset(leg, [10])
+        assert live.sent[0].data[7] == T.CMD_STOP
+
+    def test_all_motors_by_default(self, leg, live):
+        offsets = C.measure_offset(leg)
+        assert set(offsets) == set(leg.motor_ids)
+
+    def test_one_missing_motor_is_rejected(self, leg, raw):
+        """한 관절이라도 빠지면 그 관절의 0도를 모름. 0으로 두면 조용히 틀림."""
+        with pytest.raises(C.CommissioningError, match="배선과 CAN id"):
+            C.measure_offset(leg)
+
     def test_reports_in_raw_space(self, leg, live):
         """캘리브레이션 전에도 쓸 수 있어야 하므로 raw 공간임."""
         results = C.sweep(leg, [10], should_stop=lambda: True)

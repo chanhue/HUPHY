@@ -15,8 +15,8 @@ calibration/
 **조립을 재서 얻는 값**만 담음.
 
 ```
-sign             모터 회전 방향이 관절 양의 방향과 반대면 -1
-offset_deg       기계 영점에서 관절 영자세까지의 차이
+sign             모터 회전 방향이 관절 양의 방향과 반대면 -1. 설계가 정함
+offset_deg       기계 영점에서 관절 0도까지의 차이. commission sweep 이 잼
 zero_reference   영점을 어느 자세에서 잡았는지 사람이 남기는 메모
 ```
 

@@ -386,45 +386,128 @@ def _enter_pressed() -> bool:
     return True
 
 
+LINKED = (("ankle_a1", "ankle_a2"),)
+"""손으로 갈라 움직일 수 없는 관절 묶음.
+
+발목 두 모터는 로드로 발판에 물려 있어 한쪽만 돌릴 수 없음. 발을 잡고 움직이면
+둘이 같이 따라오므로, 한 번의 조작으로 두 범위가 동시에 나옴. `sweep` 은 이 묶음을
+한 단계로 처리함.
+"""
+
+
+def _steps(joints: List[str]) -> List[List[str]]:
+    """관절 목록을 `sweep` 한 단계씩으로 나눔. 묶인 것은 같이 감."""
+    remaining = list(joints)
+    out: List[List[str]] = []
+    while remaining:
+        head = remaining[0]
+        group = next((g for g in LINKED if head in g), None)
+        if group is None:
+            out.append([head])
+            remaining.remove(head)
+            continue
+        together = [j for j in remaining if j in group]
+        out.append(together)
+        for name in together:
+            remaining.remove(name)
+    return out
+
+
 def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
-    """토크를 끄고 손으로 미는 동안 가동 범위를 기록함."""
+    """관절마다 0도를 정하고, 그 기준으로 가동 범위를 잼.
+
+    0도를 **먼저** 받는 이유: 그래야 재는 값이 곧 관절 좌표계 각도이고, 화면에
+    나온 최대·최소를 `robot.yaml` 에 그대로 옮길 수 있음.
+    """
     asked = args.joint is None
     joints = choose_joints(limb, args.joint, allow_all=True, what="잴까요")
     choose_options(args.command, args, asked=asked)
     if asked:
         echo_command(limb, args.command, args.joint or "", args)
-    ids = [limb.motors[j].id for j in joints]
+
+    if not sys.stdin.isatty():
+        raise SystemExit("sweep 은 화면에서 실행할 것 -- 관절마다 Enter 를 받음")
+
     names = {motor.id: name for name, motor in limb.motors.items()}
+    steps = _steps(joints)
 
     print(
-        f"\n{limb.name} 가동 범위 측정\n\n"
-        f"  토크를 끕니다. 관절을 손으로 **양쪽 끝까지** 천천히 미세요.\n"
-        f"  하드스톱에 닿는 느낌을 확인할 것 -- 끝까지 안 밀면 그만큼 좁게 나옵니다.\n"
-        f"  발목은 발을 잡고 움직이면 두 모터가 같이 따라옵니다.\n\n"
-        f"  끝나면 Enter.\n"
+        f"\n{limb.name} 가동 범위 측정 -- {len(steps)}단계\n\n"
+        f"  관절마다 두 번 물어봅니다.\n"
+        f"    1) 0도 자세로 두고 Enter    -- 여기를 관절 0도로 부름\n"
+        f"    2) 양쪽 끝까지 밀고 Enter   -- 그 기준으로 최대·최소를 기록\n\n"
+        f"  토크는 꺼져 있습니다. 하드스톱에 닿는 느낌을 확인하며 천천히 밀 것 --\n"
+        f"  끝까지 안 밀면 그만큼 좁게 나옵니다."
     )
+
+    results = {}
+    for index, group in enumerate(steps, start=1):
+        results.update(_sweep_step(bus, limb, group, index, len(steps), names, args.hz))
+
+    return _sweep_report(limb, results, names)
+
+
+def _sweep_step(bus, limb, group, index, total, names, hz) -> dict:
+    """한 단계. 0도를 받고, 그 기준으로 범위를 잼."""
+    ids = [limb.motors[j].id for j in group]
+    title = " + ".join(group)
+
+    print(f"\n  [{index}/{total}] {title}")
+    if len(group) > 1:
+        print(f"       발을 잡고 움직이면 두 모터가 같이 따라옵니다.")
+
+    input(f"       0도 자세로 두고 Enter: ")
+    offsets = C.measure_offset(bus, ids)
+    for mid in ids:
+        print(f"       {names[mid]:<10} offset {offsets[mid]:+8.2f}")
+
+    print(f"\n       양쪽 끝까지 미세요. 끝나면 Enter.\n")
 
     lines = [0]
 
     def show(results, positions):
         if lines[0]:
             print(f"\033[{lines[0]}A", end="")
-        out = [f"  {'관절':<10} {'최소':>9} {'지금':>9} {'최대':>9} {'범위':>9}"]
+        out = [f"       {'관절':<10} {'최소':>9} {'지금':>9} {'최대':>9} {'범위':>9}"]
         for mid, r in results.items():
             now = positions.get(mid)
             now_text = f"{now:9.2f}" if now is not None else f"{'--':>9}"
             out.append(
-                f"  {names[mid]:<10} {r.lo_deg:9.2f} {now_text} "
+                f"       {names[mid]:<10} {r.lo_deg:9.2f} {now_text} "
                 f"{r.hi_deg:9.2f} {r.span_deg:9.2f}"
             )
         print("\n".join(out))
         lines[0] = len(out)
 
-    results = C.sweep(
-        bus, ids, should_stop=lambda: _enter_pressed(), on_update=show, hz=args.hz
+    return C.sweep(
+        bus,
+        ids,
+        should_stop=lambda: _enter_pressed(),
+        on_update=show,
+        hz=hz,
+        offsets=offsets,
     )
 
-    print(f"\n  robot.yaml 의 {limb.name}.motors 에 적을 것 (raw 공간):\n")
+
+def _sweep_report(limb: LimbConfig, results: dict, names: dict) -> int:
+    """오프셋은 캘리브레이션 파일에, 한계각은 화면에."""
+    if limb.calibration_path:
+        path = limb.calibration_path
+        entries = cal.load(path) if path.is_file() else cal.identity(limb.motors)
+        for mid, r in results.items():
+            previous = entries.get(names[mid], MotorCalibration(motor_id=-1))
+            entries[names[mid]] = MotorCalibration(
+                motor_id=-1,
+                sign=previous.sign,
+                offset_deg=r.offset_deg,
+                zero_reference=previous.zero_reference,
+            )
+        cal.save(path, entries, limb=limb.name)
+        print(f"\n  오프셋을 {path} 에 저장했음 ({len(results)}개).")
+    else:
+        print("\n  캘리브레이션 파일이 설정되어 있지 않아 오프셋을 저장하지 못함.")
+
+    print(f"\n  robot.yaml 의 {limb.name}.motors 에 적을 것 (관절 좌표계):\n")
     for mid, r in results.items():
         motor = limb.motors[names[mid]]
         print(
@@ -435,7 +518,7 @@ def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
     print(
         f"\n  한 번 더 돌려 같은 값이 나오는지 확인할 것.\n"
-        f"  영점을 다시 잡으면 이 값도 다시 재야 함 -- raw 는 영점에 매달려 있음."
+        f"  기계 영점을 다시 잡으면 오프셋과 한계각을 둘 다 다시 재야 함."
     )
 
     thin = [names[mid] for mid, r in results.items() if r.span_deg < 5.0]
@@ -477,8 +560,8 @@ def cmd_nudge(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 def cmd_zero(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     """지금 자세를 기계 영점으로 잡음.
 
-    관절 이름을 생략하면 **전부** 잡음. 토크가 꺼진 상태로 자세를 유지해야 하는데,
-    명령을 여섯 번 나눠 치면 그동안 다리가 무너짐.
+    관절 이름을 생략하면 **전부** 잡음. 한 번 실행해 관절마다 Enter 를 받음 --
+    명령을 여섯 번 나눠 치면 그동안 자세를 유지할 수 없음.
     """
     asked = args.joint is None
     joints = choose_joints(limb, args.joint, allow_all=True, what="영점 잡을까요")
@@ -491,9 +574,15 @@ def cmd_zero(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
     bus.disable_torque([limb.motors[j].id for j in joints])
 
+    step = sys.stdin.isatty() and len(joints) > 1
+    if step:
+        print("  자세를 잡은 채로 관절마다 Enter.\n")
+
     done = []
     failed = []
     for joint in joints:
+        if step:
+            input(f"  {joint:10} Enter: ")
         try:
             C.set_zero(bus, limb.motors[joint].id, zero_reference=args.note)
         except C.CommissioningError as e:
