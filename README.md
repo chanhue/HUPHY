@@ -287,24 +287,87 @@ CanBus("can1", interface="socketcan")
 
 ### 커미셔닝 — 조립할 때 한 번
 
+**목록임. 실제로 치는 순서는 [6번](#6-처음-브링업-순서).**
+
+#### 읽기만 함 — 아무것도 안 움직임
+
 ```bash
 huphy-commission --limb right_leg scan
+```
+어느 모터가 응답하는지. **가장 먼저 치는 것.** 빠지면 배선·전원·CAN id·프로토콜이
+후보인데, 넷이 여기서 구분되지 않음.
+
+```bash
 huphy-commission --limb right_leg state
+```
+지금 각도·속도·토크·온도. `raw` 와 `cal` 을 나란히 냄. 손으로 관절을 움직이며
+값이 따라오는지 볼 때도 씀.
+
+```bash
 huphy-commission --limb right_leg fault
-huphy-commission --limb right_leg clear-fault [관절]
+```
+고장 비트. `과열`, `스톨`, `저전압` 등. 응답이 없는 것과 고장이 없는 것은 다르게 냄.
 
-huphy-commission --limb right_leg sweep          # 가동 범위 측정
+#### 고치기
+
+```bash
+huphy-commission --limb right_leg clear-fault          # 전부
+huphy-commission --limb right_leg clear-fault knee     # 하나만
+```
+고장 상태를 지움. **원인이 남아 있으면 다시 뜸.**
+
+#### 재기 — 토크를 끄고 사람이 움직임
+
+```bash
 huphy-commission --limb right_leg nudge knee --delta 5
+```
+모터 하나를 5도 움직였다 되돌림. **어느 모터가 어느 관절인지 눈으로 확인하는 용도.**
+낮은 게인(`kp=5`)으로 살살 밀고, 명령한 만큼 안 움직이면 알려줌. 20도까지만 허용함.
 
-# [영구] --yes 가 있어야 나감
+```bash
+huphy-commission --limb right_leg sweep                # 전 관절
+huphy-commission --limb right_leg sweep knee           # 하나만
+```
+토크를 끄고 **사람이 관절을 양쪽 끝까지 미는 동안** 최대·최소를 기록함. Enter 로
+끝냄. 끝나면 `robot.yaml` 에 붙일 형태로 냄 — **파일을 고치지는 않음.**
+
+**영점을 잡은 뒤에 해야 함.** 재는 값이 영점 기준 각도임.
+
+#### [영구] — `--yes` 가 있어야 나감
+
+되돌리기 어려움. 승인 확인이 **버스를 열기 전에** 일어남.
+
+```bash
 huphy-commission --limb right_leg zero knee --note "다리 편 상태" --yes
+```
+지금 자세를 그 모터의 0도로 잡음. **전원을 꺼도 남음.** `--note` 는 그때 다리가
+어떤 자세였는지 — 모터는 값만 저장하고 자세는 아무 데도 안 남으므로, 나중에 모터를
+갈 때 재현하려면 이 메모가 필요함. 캘리브레이션 파일에 자동으로 적힘.
+
+토크가 켜져 있으면 거부함 — 좌표계가 옮겨가는데 직전 목표각은 옛 좌표계 값이라
+그 차이만큼 관절이 튐.
+
+```bash
 huphy-commission --limb right_leg mode knee --to mit
+```
+제어 모드. 본 프로젝트는 `mit` 을 씀 (전원 투입 기본값이기도 함). 즉시 적용됨.
+
+```bash
 huphy-commission --limb right_leg can-id knee --to 20 --yes
+```
+모터의 CAN id 변경. **바꾼 뒤 `robot.yaml` 도 고쳐야 함.** 이미 쓰는 id 는 거부함 —
+같은 id 가 둘이면 응답이 충돌해 구분조차 안 됨.
+
+```bash
 huphy-commission --limb right_leg protocol knee --to mit --yes
 ```
+통신 프로토콜. **전원을 재투입해야 적용됨.** 바뀌었는지는 코드로 확인 못 함
+([이슈 #11](docs/issues.md)).
 
-`--limb` 은 생략할 수 없음 — 다리마다 CAN 채널이 달라 **잘못 고르면 엉뚱한 다리가
-움직임.**
+#### `--limb` 은 생략할 수 없음
+
+다리마다 CAN 채널이 달라 **잘못 고르면 엉뚱한 다리가 움직임.** 팔다리가 하나뿐인
+설정에서만 생략됨.
 
 ### 브링업 — 반복해서 움직여 봄
 
