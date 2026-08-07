@@ -5,22 +5,16 @@
 지금은 **다리 하나**(모터 6개, CAN 채널 1개)가 동작하고, 팔·상체가 붙어도 같은
 구조가 그대로 늘어남.
 
-```bash
-sudo ip link set can1 up type can bitrate 1000000
-
-python -m huphy.scripts.commission --limb right_leg scan
-python -m huphy.scripts.bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
-```
-
-**처음 만질 때는 두 플래그가 필요함.** 게인이 아직 0이라 `--allow-uncalibrated`
-없이는 토크가 나가는 항목이 거부되고, `--gain-scale` 로 낮춰 시작하는 것이 안전함.
-
 ---
 
 ## 목차
 
-- [무엇이 필요한가](#무엇이-필요한가)
-- [처음부터 다리를 움직이기까지](#처음부터-다리를-움직이기까지)
+- [1. 하드웨어 준비](#1-하드웨어-준비)
+- [2. 모터 설정](#2-모터-설정)
+- [3. 환경 만들기](#3-환경-만들기)
+- [4. CAN 채널 올리기](#4-can-채널-올리기)
+- [5. 명령어](#5-명령어)
+- [6. 처음 브링업 순서](#6-처음-브링업-순서)
 - [조정해야 할 값](#조정해야-할-값)
 - [지금 무엇이 비어 있나](#지금-무엇이-비어-있나)
 - [계층 구조](#계층-구조)
@@ -30,55 +24,285 @@ python -m huphy.scripts.bringup --limb right_leg --gain-scale 0.1 --allow-uncali
 
 ---
 
-## 무엇이 필요한가
-
-**하드웨어**
+## 1. 하드웨어 준비
 
 ```
 라즈베리파이 + CAN HAT
-RobStride RS02 x4 (고관절 3, 무릎 1)
-RobStride RS00 x2 (발목 링키지)
+RobStride RS02 x4    고관절 3, 무릎 1
+RobStride RS00 x2    발목 링키지
+24V 전원
 ```
 
-**소프트웨어**
+### 배선
 
-```bash
-pip install -e .          # python-can, numpy, PyYAML
-pip install -e ".[dev]"   # + pytest
+모터를 **한 줄로 데이지체인**함. 양 끝에 120Ω 종단저항이 있어야 함 — 없으면 통신이
+불안정해짐.
+
+```
+CAN HAT ── m7 ── m8 ── m9 ── m10 ── m11 ── m12
+[120Ω]                                    [120Ω]
 ```
 
-**모터 설정** — 코드가 확인하지 않고 맞다고 가정하는 것들임.
+오른다리는 `can1`, 왼다리는 `can0` 을 씀. **두 다리를 한 버스에 묶지 않음** —
+12개 모터가 같은 선을 나눠 쓰면 주기 예산이 두 배가 됨.
 
-| 전제 | 어긋나면 |
-|---|---|
-| MIT 프로토콜 (11-bit 표준 프레임) | **명령이 무시되고 에러도 안 남** |
-| `zero_sta = 1` | 위치 보고가 `[0,360)` 이 되어 부호가 뒤집힘 |
-| 비트레이트 1 Mbps | 통신이 아예 안 됨 |
+### CAN id 와 모델
 
-지금은 MotorStudio 같은 외부 도구로 확인해야 함. 코드로 읽을 방법이 없음
-([이슈 #11](docs/issues.md)).
+```
+오른다리 (can1)                왼다리 (can0)
+ 7   hipz      RS02             1   hipz      RS02
+ 8   hipx      RS02             2   hipx      RS02
+ 9   hipy      RS02             3   hipy      RS02
+10   knee      RS02             4   knee      RS02
+11   ankle_a1  RS00             5   ankle_a1  RS00
+12   ankle_a2  RS00             6   ankle_a2  RS00
+```
+
+`config/robot.yaml` 과 **정확히 같아야 함.** 다르면 응답이 빠지거나, 더 나쁘게는
+엉뚱한 관절이 움직임.
+
+다르면 둘 중 하나를 고침 — 모터의 id 를 바꾸거나, 설정 파일의 `id` 를 바꾸거나.
 
 ---
 
-## 처음부터 다리를 움직이기까지
+## 2. 모터 설정
+
+**코드가 확인하지 않고 맞다고 가정하는 값들임.** 어긋나면 조용히 잘못 동작함.
+
+| 항목 | 값 | 어디서 정하나 |
+|---|---|---|
+| 통신 프로토콜 | **MIT** (11-bit 표준 프레임) | 모터 설정 |
+| `zero_sta` (`0x7029`) | **1** | 모터 설정. 플래시 저장 |
+| 제어 모드 | **MIT** (전원 투입 기본값) | 모터 설정 |
+| 비트레이트 | **1 Mbps** | 모터와 CAN 채널 양쪽 |
+
+### 어긋나면
+
+| | 증상 |
+|---|---|
+| 프로토콜이 private | **연결도 되고 에러도 없는데 모터만 안 움직임** |
+| `zero_sta = 0` | 위치가 `[0,360)` 으로 보고되어 음수 각도가 340도로 나옴 |
+| 비트레이트 불일치 | 통신이 아예 안 됨 |
+
+**프로토콜이 가장 위험함.** 공장 기본값이 private 인데 이 코드는 MIT 로 보냄.
+증상이 "모터만 안 움직인다" 라서 배선·전원·CAN id 를 먼저 의심하게 되고, 프로토콜은
+마지막에 떠오름.
+
+### 어떻게 설정하나
+
+**MotorStudio 같은 외부 도구로 함.** 코드로 읽을 방법이 없음 — 파라미터 접근은
+29-bit 확장 프레임이 필요한데 이 코드는 11-bit 표준 프레임만 보냄
+([이슈 #11](docs/issues.md)).
+
+프로토콜만은 코드로 **바꿀 수는** 있음. 다만 바뀌었는지 확인은 못 함.
+
+```bash
+huphy-commission --limb right_leg protocol knee --to mit --yes
+# 전원을 재투입해야 적용됨
+```
+
+**모터를 교체하거나 추가할 때마다 다시 설정해야 함.** 팔·상체까지 가면 20개가
+넘어가므로 그때는 일괄 확인 방법이 필요해짐.
+
+---
+
+## 3. 환경 만들기
+
+### 파이썬
+
+3.9 이상. 라즈베리파이 OS 는 보통 그 이상이 이미 있음.
+
+```bash
+python3 --version
+```
+
+### 시스템 패키지 (라즈베리파이)
+
+```bash
+sudo apt update
+sudo apt install -y python3-venv python3-pip can-utils
+```
+
+`can-utils` 는 `candump` / `cansend` 를 줌. 코드가 쓰지는 않지만 **배선이 살아
+있는지 확인할 때** 있으면 편함.
+
+### 가상환경
+
+```bash
+git clone https://github.com/chanhue/HUPHY.git
+cd HUPHY
+
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+프롬프트 앞에 `(.venv)` 가 붙으면 들어간 것임.
+
+**가상환경을 쓰는 이유**: 시스템 파이썬에 패키지를 깔면 다른 프로그램과 버전이
+부딪힘. 라즈베리파이는 시스템 파이썬을 OS 도구가 쓰고 있어서 특히 그럼.
+
+### 설치
+
+```bash
+pip install --upgrade pip
+pip install -e .            # python-can, numpy, PyYAML
+pip install -e ".[dev]"     # + pytest
+```
+
+`-e` 는 **소스를 그대로 씀.** 코드를 고치면 다시 설치하지 않아도 바로 반영됨.
+설정을 튜닝하면서 계속 고치게 되므로 이쪽이 편함.
+
+### 확인
+
+```bash
+python -m pytest tests -q          # 642 passed
+huphy-commission --help
+```
+
+**하드웨어 없이 전부 통과해야 함.** 안 되면 설치가 덜 된 것임.
+
+### 다음부터
+
+```bash
+cd HUPHY
+source .venv/bin/activate
+```
+
+빠져나올 때는 `deactivate`.
+
+### 가상환경 없이 쓰려면
+
+`PYTHONPATH` 로도 됨. 설치 없이 돌려볼 때 씀.
+
+```bash
+PYTHONPATH=src python3 -m huphy.scripts.commission --limb right_leg scan
+PYTHONPATH=src python3 -m pytest tests -q
+```
+
+---
+
+## 4. CAN 채널 올리기
+
+**속도는 커널이 정함.** 파이썬이 바꿀 수 없으므로 채널을 올릴 때 넣어야 함.
+
+```bash
+sudo ip link set can1 up type can bitrate 1000000
+ip -details link show can1                       # 확인
+```
+
+`state UP` 과 `bitrate 1000000` 이 보여야 함.
+
+### 배선이 살아 있는지
+
+```bash
+candump can1        # 다른 터미널에서. 모터가 응답하면 프레임이 보임
+```
+
+### 부팅할 때 자동으로
+
+```bash
+# /etc/network/interfaces.d/can1
+auto can1
+iface can1 can static
+    bitrate 1000000
+    up ip link set $IFACE txqueuelen 1000
+```
+
+### 내릴 때
+
+```bash
+sudo ip link set can1 down
+```
+
+채널이 안 올라와 있으면 `connect()` 가 실패하고 이 명령을 알려줌.
+
+---
+
+## 5. 명령어
+
+### 커미셔닝 — 조립할 때 한 번
+
+```bash
+huphy-commission --limb right_leg scan
+huphy-commission --limb right_leg state
+huphy-commission --limb right_leg fault
+huphy-commission --limb right_leg clear-fault [관절]
+
+huphy-commission --limb right_leg nudge knee --delta 5
+
+# [영구] --yes 가 있어야 나감
+huphy-commission --limb right_leg zero knee --note "다리 편 상태" --yes
+huphy-commission --limb right_leg mode knee --to mit
+huphy-commission --limb right_leg can-id knee --to 20 --yes
+huphy-commission --limb right_leg protocol knee --to mit --yes
+```
+
+`--limb` 은 생략할 수 없음 — 다리마다 CAN 채널이 달라 **잘못 고르면 엉뚱한 다리가
+움직임.**
+
+### 브링업 — 반복해서 움직여 봄
+
+```bash
+# 처음 만질 때
+huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
+
+# 실측이 끝난 뒤
+huphy-bringup --limb right_leg
+```
+
+| 플래그 | 무엇 |
+|---|---|
+| `--gain-scale 0.1` | 게인을 10% 로 낮춰 시작 |
+| `--allow-uncalibrated` | 실측 전에도 토크를 넣음 |
+| `--hz 200` | 제어 주기. 기본은 설정의 `control_hz` |
+| `--no-precise` | 마감 직전 스핀을 끔. CPU 가 빠듯하면 |
+
+**게인이 0이면 `--allow-uncalibrated` 없이는 토크 항목이 거부됨.** 실측을 하려면
+움직여야 하므로 처음에는 필요함.
+
+메뉴:
 
 ```
-1  CAN 채널 올리기       sudo ip link set can1 up type can bitrate 1000000
-2  응답 확인             commission scan
-3  고장 확인             commission fault
-4  위치 확인             commission state
-5  관절 매핑 확인         commission nudge <관절>      관절마다
-6  영점 잡기             commission zero <관절>       관절마다
-7  실측값 채우기          calibration/*.json 을 손으로
-8  게인 튜닝             bringup                     그래프를 보며
+1. 상태 보기          raw/cal, 속도·토크·온도, ack·age, 발목 pitch/roll
+2. 카운터 보기        가드·CAN 카운터, 루프 통계
+3. 자세 유지 [토크]    처지나, 떨리나
+4. 한 관절 옮기기 [토크]
+5. 계단 응답 [토크]    게인 튜닝의 핵심
+6. 사인파 왕복 [토크]
 ```
 
-**5번이 중요함.** 설정에는 `7=hipz 8=hipx 9=hipy 10=knee 11=ankle_a1 12=ankle_a2`
+### 공통
+
+```bash
+--config <경로>    기본값: 위로 올라가며 config/robot.yaml 을 찾음
+-v                 자세한 로그
+```
+
+---
+
+## 6. 처음 브링업 순서
+
+1~5 가 끝났다고 보고, 로봇 앞에서 하는 순서.
+
+```
+a  응답 확인       commission scan                6개 다 응답하나
+b  고장 확인       commission fault
+c  위치 확인       commission state               지금 어디 있나
+d  관절 매핑 확인   commission nudge <관절>         관절마다. 눈으로
+e  영점 잡기       commission zero <관절> --yes    관절마다
+f  실측값 채우기    calibration/*.json 을 손으로     sign, offset
+g  게인 튜닝       bringup                        그래프를 보며
+```
+
+**d 가 중요함.** 설정에는 `7=hipz 8=hipx 9=hipy 10=knee 11=ankle_a1 12=ankle_a2`
 로 되어 있지만 실물로 확인된 적이 없음 ([이슈 #8](docs/issues.md)).
 
 `nudge` 로 한 모터씩 움직여 어느 관절이 도는지 **눈으로** 봐야 함.
 
-**6번 전에는 어느 자세가 0도인지 모름.** 영점을 안 잡으면 그 뒤가 전부 의미 없음.
+**e 전에는 어느 자세가 0도인지 모름.** 영점을 안 잡으면 그 뒤가 전부 의미 없음.
+
+다리를 원하는 자세로 손으로 잡아 놓고 하나씩 함. 그때 어떤 자세였는지를
+`--note` 에 적어야 나중에 재현할 수 있음.
 
 ### 각 단계에서 보는 것
 
