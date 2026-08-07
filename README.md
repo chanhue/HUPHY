@@ -295,17 +295,10 @@ huphy-commission --limb right_leg scan
 huphy-commission --limb right_leg fault
 
 # b  관절 매핑 확인 — 어느 모터가 어느 관절인지 눈으로. 관절마다
-huphy-commission --limb right_leg nudge hipz
-huphy-commission --limb right_leg nudge knee
-# ...
+huphy-commission --limb right_leg nudge          # 목록에서 하나씩 골라 가며
 
 # c  영점 — 다리를 기준 자세로 손으로 잡아 놓고, 관절 전부
-huphy-commission --limb right_leg zero hipz     --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero hipx     --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero hipy     --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero knee     --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero ankle_a1 --note "다리 편 상태, 발바닥 평면" --yes
-huphy-commission --limb right_leg zero ankle_a2 --note "다리 편 상태, 발바닥 평면" --yes
+huphy-commission --limb right_leg zero --yes     # Enter(전부), 이어서 자세를 적음
 
 # d  가동 범위 — 전부 영점 잡은 뒤 한 번에
 huphy-commission --limb right_leg sweep
@@ -315,6 +308,9 @@ huphy-commission --limb right_leg sweep
 # f  게인 튜닝
 huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
 ```
+
+b·c 는 관절을 생략했음. 목록이 뜨고 골라서 진행함. 관절과 옵션을 다 적어 한 줄로
+치는 형태는 [6번](#6-명령어-목록)에 있음.
 
 ### b 는 모터를 바꾸거나 왼다리를 붙일 때
 
@@ -329,8 +325,22 @@ huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
 
 영점을 안 잡으면 그 뒤가 전부 의미 없음.
 
-다리를 원하는 자세로 손으로 잡아 놓고 **관절 전부**를 그 자세에서 잡음. 그때 어떤
-자세였는지를 `--note` 에 적어야 나중에 재현할 수 있음.
+다리를 원하는 자세로 손으로 잡아 놓고 **관절 전부**를 그 자세에서 잡음. 여섯 개를
+한 번에 잡음 — 나눠 치면 그 사이에 다리가 무너짐.
+
+그때 어떤 자세였는지를 적어야 나중에 재현할 수 있음. 관절을 생략하면 이어서 물어봄.
+
+```
+  right_leg -- 무엇을 영점 잡을까요?
+  ...
+  선택 [a]:
+
+  옵션 -- 쉼표로 구분, 비우면 기본값
+
+    1) note    (필수)     어느 자세에서 잡는지. 나중에 재현하려면 필요함
+
+  입력 [(필수)]: 다리 편 상태, 발바닥 평면 접촉
+```
 
 ### d 가 c 뒤인 이유
 
