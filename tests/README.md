@@ -15,7 +15,8 @@ tests/
 ├── test_leg.py             robots/leg.py               42개
 ├── test_telemetry.py       telemetry/                  43개
 ├── test_control.py         control/                    43개
-└── test_bringup.py         scripts/bringup.py          26개
+├── test_bringup.py         scripts/bringup.py          26개
+└── test_selftest.py        scripts/selftest.py         27개
 ```
 
 ## 실행
@@ -27,7 +28,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-676 passed in 11.5s
+703 passed in 11.5s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -240,6 +241,21 @@ UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬
 
 메뉴를 실제로 돌림 — `builtins.input` 을 미리 넣은 값으로 갈아끼움. 루프가 실제로
 도는 항목이 있어 **이 파일이 가장 오래 걸림**(약 7초).
+
+### `test_selftest.py` — 27개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestJointLimits` | 4 | 한계 출처 둘, 미실측 관절 제외 |
+| `TestInset` | 3 | 한계 여유, 좁은 관절 |
+| `TestApproach` | 6 | 지금 자리에서 출발, 도착 후 유지 |
+| `TestCycle` | 5 | 가운데 시작, 양 끝 도달, 한계 안 |
+| `TestThen` | 3 | 인계 시각, 뒤 구간의 0초 |
+| `TestMidpoints` | 1 | 중앙값 |
+| `TestParser` | 5 | 공통 옵션이 앞뒤 어디서나, 덮어쓰지 않음 |
+
+동작이 **순수 함수**라 하드웨어도 루프도 없이 확인함 — 시간과 관찰을 넣고 관절
+목표를 봄. 가장 빠른 파일임(0.2초).
 
 ---
 

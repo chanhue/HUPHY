@@ -305,8 +305,12 @@ huphy-commission --limb right_leg sweep
 
 # e  결과를 config/robot.yaml 의 limits_deg 에 붙임
 
-# f  게인 튜닝
+# f  게인 튜닝 — 한 관절씩 골라 가며
 huphy-bringup --limb right_leg --gain-scale 0.1 --allow-uncalibrated
+
+# g  다리 전체가 버티는지
+huphy-test --limb right_leg zero
+huphy-test --limb right_leg range
 ```
 
 b·c 는 관절을 생략했음. 목록이 뜨고 골라서 진행함. 관절과 옵션을 다 적어 한 줄로
@@ -613,6 +617,32 @@ huphy-bringup --limb right_leg
 6. 사인파 왕복 [토크]
 ```
 
+### 동작 확인 — 정해진 패턴을 계속
+
+```bash
+huphy-test --limb right_leg zero                        # 전부 0도로 두고 붙잡음
+huphy-test --limb right_leg range --period 10 --margin 8  # 최소~최대 왕복
+```
+
+**Ctrl-Q 를 누를 때까지** 계속함. 사람이 답을 고르는 자리가 없어서, 다리를 보거나
+그래프를 보는 데 손을 쓸 수 있음.
+
+| | 무엇을 보나 |
+|---|---|
+| `zero` | 자세가 유지되는가. 관절 전부가 0도라 어긋난 관절이 눈으로 보임 |
+| `range` | 끝까지 가는가. 걸리는 데는 없는가 |
+
+| 플래그 | 무엇 |
+|---|---|
+| `--approach 3` | 시작 자세까지 옮기는 시간. 토크를 넣는 순간 튀지 않게 |
+| `--period 6` | `range` 한 번 왕복하는 시간. 길수록 천천히 |
+| `--margin 5` | 한계에서 남길 여유. 하드스톱에 부딪히지 않게 |
+| `--gain-scale` `--hz` `--allow-uncalibrated` | 브링업과 같음 |
+
+한계가 없는 관절은 빠짐 — 어디까지 가도 되는지 모르는 관절을 흔들 수 없음. 발목만
+`robot.yaml` 이 아니라 기구학 쪽 시험 범위를 씀. 모터 두 개가 로드로 물려 있어
+모터 한계를 관절 한계로 옮길 수 없기 때문임.
+
 ### 공통
 
 ```bash
@@ -688,7 +718,8 @@ huphy-bringup --limb right_leg
 scripts/          터미널 진입점
    │
    ├─ commission.py   조립할 때 한 번 하는 조작
-   └─ bringup.py      반복해서 움직여 보는 메뉴
+   ├─ bringup.py      하나씩 골라 움직여 보는 메뉴
+   └─ selftest.py     정해진 패턴을 Ctrl-Q 까지
    │
 control/          제어 루프. 주기와 안전
    │
@@ -880,13 +911,16 @@ kept_up    꾸준한 느림.   평균이 목표의 90% 미만
 **멈출 때 자세를 먼저 붙잡음.** 서 있는 다리에서 힘이 갑자기 빠지면 주저앉음.
 예외로 빠져나가도 같은 순서를 탐.
 
-### `scripts/` — 메뉴가 루프를 탐
+### `scripts/` — 움직이는 것은 전부 루프를 탐
 
-메뉴가 로봇을 직접 부르면 그 경로에서만 텔레메트리·주기 측정·정지 순서가 빠짐.
+진입점이 로봇을 직접 부르면 그 경로에서만 텔레메트리·주기 측정·정지 순서가 빠짐.
 **그러면 그래프가 안 나오는데 텔레메트리가 고장난 줄 알게 됨.**
 
-메뉴는 `Motion` 만 정하고 루프에 넘김. 테스트가 `ControlLoop.run` 을 감시해 이것을
+진입점은 `Motion` 만 정하고 루프에 넘김. 테스트가 `ControlLoop.run` 을 감시해 이것을
 고정함.
+
+`bringup` 은 한 관절씩 게인을 찾는 자리고, `selftest` 는 찾은 게인으로 다리 전체가
+버티는지 보는 자리임. 사람이 답을 고르지 않아서 다리를 보고 있을 수 있음.
 
 ---
 
