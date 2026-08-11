@@ -109,6 +109,32 @@ def build_leg(
 # ===========================================================================
 # 화면
 # ===========================================================================
+def _ack_text(ack: float) -> str:
+    """직전 주기의 응답 여부. 숫자 세 값을 사람이 읽는 말로.
+
+    `-1`(명령하지 않음)과 `0`(명령했는데 응답 없음)은 다른 상태임 — 앞은 정상이고
+    뒤는 씹힌 것임.
+    """
+    if ack > 0:
+        return "받음"
+    if ack == 0:
+        return "씹힘"
+    return "명령안함"
+
+
+def _age_text(age_ms: float) -> str:
+    """마지막 응답 이후 경과. 1초가 넘으면 초로 바꿔 씀.
+
+    100Hz 면 정상값이 한 자리 ms 라 ms 로 봐야 하고, 끊긴 모터는 수십만 ms 가 나와
+    ms 로는 몇 분인지 읽히지 않음.
+    """
+    if age_ms < 0:
+        return "없음"
+    if age_ms >= 1000.0:
+        return f"{age_ms / 1000.0:.1f}초"
+    return f"{age_ms:.2f}ms"
+
+
 def show_state(leg: Leg, loop: ControlLoop) -> None:
     """지금 상태를 표로. **읽기만 함** -- 루프가 이미 수거해 둔 값을 씀."""
     loop.step(None, t=0.0)          # 한 주기 읽어 옴
@@ -120,7 +146,7 @@ def show_state(leg: Leg, loop: ControlLoop) -> None:
         "  "
         + table.header(
             ("관절", 10, "<"), ("raw", 9), ("cal", 9), ("속도", 9), ("토크", 8),
-            ("온도", 6), ("ack", 4), ("age(ms)", 9),
+            ("온도", 6), ("응답", 8), ("마지막 응답", 12),
         )
     )
     for name in leg.motor_names:
@@ -130,7 +156,8 @@ def show_state(leg: Leg, loop: ControlLoop) -> None:
             f"  {name:<10} {raw:9.2f} {observation[f'{name}.pos']:9.2f} "
             f"{observation[f'{name}.vel']:9.2f} {observation[f'{name}.torque']:8.2f} "
             f"{observation[f'{name}.temp']:6.1f} "
-            f"{status.get('ack', -1):>4.0f} {status.get('age', -1):9.2f}"
+            f"{table.cell(_ack_text(status.get('ack', -1)), 8)} "
+            f"{table.cell(_age_text(status.get('age', -1)), 12)}"
         )
 
     pose = leg.ankle_pose()

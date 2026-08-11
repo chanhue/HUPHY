@@ -261,7 +261,7 @@ class TestShowState:
     def test_shows_link_status(self, menu):
         """명령이 씹혔는지 사람이 바로 보게 함."""
         _, out = menu(["1", "q"])
-        assert "ack" in out and "age" in out
+        assert "응답" in out and "마지막 응답" in out
 
     def test_shows_ankle_pose(self, menu):
         """모터 각도가 아니라 발이 몇 도 기울었는지를 봄."""
