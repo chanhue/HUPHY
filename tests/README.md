@@ -11,7 +11,7 @@ tests/
 ├── test_config.py          config/                     58개
 ├── test_calibration.py     calibration/                38개
 ├── test_commission_cli.py  scripts/commission.py       71개
-├── test_ankle.py           kinematics/ankle.py        149개
+├── test_ankle.py           kinematics/ankle.py        165개
 ├── test_leg.py             robots/leg.py               50개
 ├── test_sensors.py         sensors/                    21개
 ├── test_telemetry.py       telemetry/                  52개
@@ -29,7 +29,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-783 passed in 13.9s
+799 passed in 13.9s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -177,7 +177,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestSweepSteps` | 5 | 발목 묶기, 순서, 빠짐 없음 |
 | `TestSweepNeedsAScreen` | 1 | 파이프에서 거부 |
 
-### `test_ankle.py` — 149개
+### `test_ankle.py` — 165개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -187,6 +187,9 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestReachability` | 7 | 시험 범위, 로드 해 없음 |
 | `TestMirror` | 10 | 반대칭 |
 | `TestWrap` | 2 | `[-180, 180)` 접기 |
+| `TestJacobian` | 5 | 수치 미분과 대조, 단위 무관 |
+| `TestJointTorqueToMotor` | 5 | 가상일 보존, 선형성, 조건수 |
+| `TestMitTorque` | 6 | 게인 단위, 감쇠, 실측 자세에서 선형화 |
 
 `TestSolveFk` 가 큰 것은 시험 범위 격자 187개를 도는 매개변수 테스트 때문임 —
 **추정 `(0, 0)` 으로도 항상 원래 자세를 찾는지**를 범위 전체에서 확인함.

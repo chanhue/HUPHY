@@ -56,6 +56,23 @@ Vec3 = np.ndarray
 FK_VERIFY_TOL_DEG = 1e-3
 """FK 결과를 IK 로 되짚었을 때 허용하는 오차. 수치 반복의 잔차보다 넉넉함."""
 
+SINGULAR_EPS = 1e-9
+"""야코비안 분모가 이보다 작으면 특이점으로 봄.
+
+분모가 0이 되는 것은 **로드가 크랭크 원에 접하는 자세**임. 그 자세에서는 모터를
+아무리 돌려도 발판이 그 방향으로 움직이지 않으므로, 필요한 토크가 무한대로 감.
+"""
+
+MAX_JACOBIAN_CONDITION = 50.0
+"""`joint_torque_to_motor` 가 거부하는 조건수.
+
+조건수가 크면 **자세 측정 오차가 토크로 증폭됨.** 엔코더 잡음 수준과 모터 토크
+한계를 보고 정할 값이고, 50 은 잰 값이 아니라 출발점임.
+
+지금 기하에서는 도달 범위 안 최대가 12 정도라 걸리지 않음 -- 그보다 먼저 로드 해가
+없어짐. 기하가 바뀌면 그때 의미가 생김.
+"""
+
 
 class AnkleUnreachableError(ValueError):
     """요청한 (pitch, roll) 에 대응하는 모터 각도가 없음.
@@ -164,6 +181,18 @@ def _rot_pitch(theta: float) -> np.ndarray:
     """x 축 회전."""
     c, s = math.cos(theta), math.sin(theta)
     return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+
+
+def _d_rot_roll(phi: float) -> np.ndarray:
+    """`_rot_roll` 의 phi 미분."""
+    c, s = math.cos(phi), math.sin(phi)
+    return np.array([[-s, 0.0, c], [0.0, 0.0, 0.0], [-c, 0.0, -s]])
+
+
+def _d_rot_pitch(theta: float) -> np.ndarray:
+    """`_rot_pitch` 의 theta 미분."""
+    c, s = math.cos(theta), math.sin(theta)
+    return np.array([[0.0, 0.0, 0.0], [0.0, -s, -c], [0.0, c, -s]])
 
 
 class AnkleKinematics:
@@ -302,6 +331,170 @@ class AnkleKinematics:
             return True
         except AnkleUnreachableError:
             return False
+
+    # ---- 야코비안과 토크 ---------------------------------------------------
+    def jacobian(self, pitch_deg: float, roll_deg: float) -> np.ndarray:
+        """`d(a1, a2) / d(pitch, roll)`. 2x2 행렬.
+
+        **닫힌 해임.** 수치 미분이 아니라 제약식을 직접 미분한 것이라, eps 를 고를
+        일도 wrap 불연속에 걸릴 일도 없음.
+
+        **단위가 없음.** 분자와 분모가 둘 다 각도라 도/도 와 rad/rad 가 같은 값임.
+        그래서 호출부가 어느 단위를 쓰든 그대로 쓸 수 있음.
+
+        유도: 모터각은 로드 길이 제약에서 나옴.
+
+            |B_i(b_i) - C_i|^2 = L_i^2,     b_i = rotation_sign_i * a_i
+
+        이것을 `D_i = C_i - A_i` 로 음함수 미분하면
+
+            d(b_i)/d(D_i) = (C_i - B_i) / (R * (D_i.z*cos(b_i) - D_i.y*sin(b_i)))
+
+        분자는 **로드 벡터**(크기가 곧 로드 길이)이고, 분모는 그 로드의 특이점에서
+        정확히 0이 되는 값임 -- `_solve_motor_angle` 의 `|ratio| -> 1` 과 같은 조건임.
+        여기에 `C_i(pitch, roll)` 의 회전 미분을 연쇄법칙으로 이으면 됨.
+
+        특이점이거나 로드 해가 없으면 `AnkleUnreachableError` 를 던짐. 그 자세에서는
+        모터를 돌려도 발판이 그 방향으로 안 움직이므로 토크가 발산함.
+        """
+        g = self.geometry
+        theta, phi = math.radians(pitch_deg), math.radians(roll_deg)
+
+        roll_m, d_roll_m = _rot_roll(phi), _d_rot_roll(phi)
+        pitch_m, d_pitch_m = _rot_pitch(theta), _d_rot_pitch(theta)
+
+        rods = (
+            (self._C1_local, self._A1, self._L1, g.offset_sign_1, g.rotation_sign_1),
+            (self._C2_local, self._A2, self._L2, g.offset_sign_2, g.rotation_sign_2),
+        )
+
+        jac = np.zeros((2, 2))
+        for i, (c_local, axis, rod_len, offset_sign, rotation_sign) in enumerate(rods):
+            rolled = roll_m @ c_local
+            c_point = self._O + pitch_m @ rolled
+            dc_dpitch = d_pitch_m @ rolled
+            dc_droll = pitch_m @ (d_roll_m @ c_local)
+
+            delta = c_point - axis
+            angle, ok = self._solve_motor_angle(delta, rod_len, offset_sign, rotation_sign)
+            # `_solve_motor_angle` 이 고른 것과 같은 가지를 써야 함.
+            beta = rotation_sign * angle
+            cos_b, sin_b = math.cos(beta), math.sin(beta)
+            denom = g.crank_r * (delta[2] * cos_b - delta[1] * sin_b)
+
+            if not ok or abs(denom) < SINGULAR_EPS:
+                raise AnkleUnreachableError(
+                    f"로드 {i + 1} 이 특이점에 있음 "
+                    f"(pitch={pitch_deg:.2f}, roll={roll_deg:.2f}, 분모={denom:.3e}). "
+                    f"이 자세에서는 모터를 돌려도 발판이 그 방향으로 움직이지 않음"
+                )
+
+            # C_i - B_i. 유효한 해에서는 크기가 로드 길이임.
+            rod_vec = np.array([
+                delta[0] - offset_sign * g.crank_t,
+                delta[1] - g.crank_r * cos_b,
+                delta[2] - g.crank_r * sin_b,
+            ])
+            grad = rod_vec / denom
+
+            jac[i, 0] = rotation_sign * float(grad @ dc_dpitch)
+            jac[i, 1] = rotation_sign * float(grad @ dc_droll)
+
+        return jac
+
+    def joint_torque_to_motor(
+        self,
+        pitch_deg: float,
+        roll_deg: float,
+        tau_pitch: float,
+        tau_roll: float,
+        *,
+        max_condition: float = MAX_JACOBIAN_CONDITION,
+    ) -> Tuple[float, float]:
+        """관절 토크 (pitch, roll) -> 모터 토크 (a1, a2). 단위는 Nm.
+
+        전달이 손실 없다고 보면 가상일이 보존됨.
+
+            tau_a . da = tau_pr . dpr,     da = J dpr
+            => tau_a = (J^T)^-1 tau_pr
+
+        **지금 자세에서 선형화함.** 목표 자세가 아니라 실측 자세를 넣을 것 -- 링키지가
+        지금 실제로 놓인 기하가 토크를 정함.
+
+        `pitch_deg`/`roll_deg` 는 도, 토크는 Nm 임. 야코비안이 단위 없는 값이라
+        각도 단위가 토크에 섞이지 않음.
+
+        조건수가 `max_condition` 을 넘으면 거부함. 그런 자세에서는 **자세를 조금
+        잘못 재기만 해도 토크가 크게 튐** -- 링키지의 실제 한계이지 계산 문제가
+        아님.
+        """
+        jac = self.jacobian(pitch_deg, roll_deg)
+
+        cond = float(np.linalg.cond(jac.T))
+        if not math.isfinite(cond) or cond > max_condition:
+            raise AnkleUnreachableError(
+                f"pitch={pitch_deg:.2f}, roll={roll_deg:.2f} 에서 야코비안 조건수가 "
+                f"{cond:.1f} 임 (한계 {max_condition}). 특이점에 가까워 자세 측정 "
+                f"오차가 토크로 증폭됨"
+            )
+
+        try:
+            tau = np.linalg.solve(jac.T, np.array([tau_pitch, tau_roll], dtype=float))
+        except np.linalg.LinAlgError as e:
+            raise AnkleUnreachableError(
+                f"pitch={pitch_deg:.2f}, roll={roll_deg:.2f} 에서 야코비안을 풀 수 없음: {e}"
+            ) from e
+
+        return float(tau[0]), float(tau[1])
+
+    def mit_torque(
+        self,
+        target: Tuple[float, float],
+        current: Tuple[float, float],
+        *,
+        target_velocity: Tuple[float, float] = (0.0, 0.0),
+        current_velocity: Tuple[float, float] = (0.0, 0.0),
+        kp: Tuple[float, float] = (0.0, 0.0),
+        kd: Tuple[float, float] = (0.0, 0.0),
+        feedforward: Tuple[float, float] = (0.0, 0.0),
+    ) -> Tuple[float, float]:
+        """관절 목표 -> 모터 토크 (a1, a2). 단위는 Nm.
+
+        모든 짝은 `(pitch, roll)` 순서임.
+
+            target, current              도
+            target_velocity, ...         도/초
+            kp                           Nm/rad
+            kd                           Nm/(rad/s)
+            feedforward                  Nm
+
+        각도는 도, 게인은 라디안 기준임. **둘 다 이 저장소의 기존 규약임** --
+        `solve_ik`/`solve_fk` 가 도를 쓰고, `robot.yaml` 의 `kp` 는 변환 없이 모터로
+        나가는데 모터는 프레임의 라디안 각도로 계산함. 오차를 안에서 라디안으로
+        바꾸므로 `kp` 값을 그대로 쓸 수 있음.
+
+        모터 펌웨어가 하던 PD 를 여기서 함.
+
+            tau_pr = kp*(목표 - 실측) + kd*(목표속도 - 실측속도) + feedforward
+            tau_a  = (J^T)^-1 tau_pr
+
+        **지금 자세에서 선형화함.** 목표가 아니라 실측을 씀 -- 링키지가 지금 놓인
+        기하가 토크를 정함.
+
+        나온 값은 `MitCommand(kp=0, kd=0, torque_nm=...)` 로 보낼 것. 모터 쪽 PD 를
+        끄지 않으면 두 PD 가 겹침.
+        """
+        tau_pitch = (
+            kp[0] * math.radians(target[0] - current[0])
+            + kd[0] * math.radians(target_velocity[0] - current_velocity[0])
+            + feedforward[0]
+        )
+        tau_roll = (
+            kp[1] * math.radians(target[1] - current[1])
+            + kd[1] * math.radians(target_velocity[1] - current_velocity[1])
+            + feedforward[1]
+        )
+        return self.joint_torque_to_motor(current[0], current[1], tau_pitch, tau_roll)
 
     # ---- 순기구학 ---------------------------------------------------------
     def solve_fk(

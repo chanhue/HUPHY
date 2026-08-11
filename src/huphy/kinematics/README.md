@@ -43,6 +43,59 @@ solve_fk(a1, a2)       ->  (pitch, roll) 순기구학
 
 ---
 
+## 토크로 굴릴 때
+
+위치 명령 대신 토크를 보내는 경로임. 모터 각도에 게인을 걸면 로드 지렛대 비가 자세마다
+달라 발목이 내는 강성이 자세마다 달라짐. 관절 토크를 만들어 야코비안으로 내리면 그 비가
+보정됨.
+
+```python
+jacobian(pitch, roll)                        ->  J = d(a1,a2)/d(pitch,roll)
+joint_torque_to_motor(자세, tau_pitch, tau_roll)  ->  (tau1, tau2)   [Nm]
+mit_torque(목표, 실측, kp=..., kd=...)        ->  (tau1, tau2)   [Nm]
+```
+
+`jacobian` 은 닫힌 해임. 제약식을 직접 미분한 것이라 eps 를 고를 일도 wrap 불연속에
+걸릴 일도 없음. **단위가 없음** — 분자와 분모가 둘 다 각도라 도/도와 rad/rad 가 같은
+값임.
+
+`joint_torque_to_motor` 는 가상일 보존에서 나옴.
+
+```
+tau_a . da = tau_pr . dpr,   da = J dpr    ->    tau_a = (J^T)^-1 tau_pr
+```
+
+**지금 자세에서 선형화함.** 목표가 아니라 실측을 넣을 것 — 링키지가 지금 놓인 기하가
+토크를 정함.
+
+`mit_torque` 는 모터 펌웨어가 하던 PD 를 여기서 함.
+
+```
+tau_pr = kp*(목표 - 실측) + kd*(목표속도 - 실측속도) + feedforward
+```
+
+| 인자 | 단위 |
+|---|---|
+| `target`, `current` | 도 |
+| `target_velocity`, `current_velocity` | 도/초 |
+| `kp` | Nm/rad |
+| `kd` | Nm/(rad/s) |
+| `feedforward` | Nm |
+
+각도는 도, 게인은 라디안 기준임. 둘 다 이 저장소의 기존 규약임 — `solve_ik`/`solve_fk`
+가 도를 쓰고, `robot.yaml` 의 `kp` 는 변환 없이 모터로 나가는데 모터는 프레임의 라디안
+각도로 계산함. 오차를 안에서 라디안으로 바꾸므로 `kp` 값을 그대로 쓸 수 있음.
+
+나온 값은 `MitCommand(kp=0, kd=0, torque_nm=...)` 로 보낼 것. 모터 쪽 PD 를 끄지 않으면
+두 PD 가 겹침.
+
+특이점에서는 던짐. 로드가 크랭크 원에 접하면 모터를 돌려도 발판이 그 방향으로 움직이지
+않아 필요한 토크가 발산함. 조건수가 `MAX_JACOBIAN_CONDITION` 을 넘어도 던짐 — 그런 자세
+에서는 자세 측정 오차가 토크로 증폭됨. 지금 기하에서는 도달 범위 안 최대가 12 정도라
+걸리지 않고, 그보다 먼저 로드 해가 없어짐.
+
+---
+
 ## FK 는 답이 하나가 아님
 
 **같은 모터각 조합이 서로 다른 자세 둘에 대응함.**
