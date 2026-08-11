@@ -8,7 +8,7 @@
 
 from . import schema
 from .loader import ConfigError, load_robot
-from .schema import LimbConfig, RobotConfig, SafetyConfig, TelemetryConfig
+from .schema import ImuConfig, LimbConfig, RobotConfig, SafetyConfig, TelemetryConfig
 
 __all__ = [
     "schema",
@@ -16,6 +16,7 @@ __all__ = [
     "ConfigError",
     "RobotConfig",
     "LimbConfig",
+    "ImuConfig",
     "SafetyConfig",
     "TelemetryConfig",
 ]

@@ -26,15 +26,23 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 from ..motors.base import Gains, Motor
-from .schema import LimbConfig, RobotConfig, SafetyConfig, TelemetryConfig
+from .schema import ImuConfig, LimbConfig, RobotConfig, SafetyConfig, TelemetryConfig
 
-ROBOT_KEYS = {"name", "limbs", "safety", "telemetry"}
+ROBOT_KEYS = {"name", "limbs", "imus", "safety", "telemetry"}
 LIMB_KEYS = {
     "kind", "side", "channel", "interface", "control_hz", "calibration", "motors",
 }
 MOTOR_KEYS = {"id", "model", "kp", "kd"}
+IMU_KEYS = {"model", "port", "baudrate", "mount"}
 SAFETY_KEYS = {"command_margin_deg", "max_delta_deg", "enforce_limits"}
 TELEMETRY_KEYS = {"host", "port", "csv_path", "csv_flush_every"}
+
+NON_LIMB_MOUNTS = {"torso", "pelvis", "head"}
+"""팔다리가 아닌 부착 자리. `limbs` 에 없어도 되는 이름들임.
+
+몸통에 붙는 IMU 가 `limbs` 항목을 요구하면, 모터가 하나도 없는 가짜 팔다리를 적어야
+함.
+"""
 
 
 class ConfigError(ValueError):
@@ -79,6 +87,27 @@ def _motor(where: str, joint: str, data: Mapping[str, Any]) -> Motor:
         )
     except (TypeError, ValueError) as e:
         raise ConfigError(f"{where}.{joint}: {e}") from e
+
+
+def _imu(name: str, data: Mapping[str, Any]) -> ImuConfig:
+    where = f"imus.{name}"
+    if not isinstance(data, Mapping):
+        raise ConfigError(f"{where}: 항목이 사전이어야 함 (받은 값 {data!r})")
+    _check_keys(where, data, IMU_KEYS)
+
+    for required in ("model", "port"):
+        if required not in data:
+            raise ConfigError(f"{where}: {required} 항목이 없음")
+
+    try:
+        return ImuConfig(
+            name=name,
+            model=str(data["model"]),
+            port=str(data["port"]),
+            **_pick(data, {"baudrate", "mount"}),
+        )
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"{where}: {e}") from e
 
 
 def _limb(name: str, data: Mapping[str, Any], *, base_dir: Path) -> LimbConfig:
@@ -149,15 +178,32 @@ def load_robot(path: "str | Path") -> RobotConfig:
     if not limbs_raw:
         raise ConfigError(f"{p}: limbs 가 비어 있음")
 
+    imus_raw = data.get("imus") or {}
+    if not isinstance(imus_raw, Mapping):
+        raise ConfigError(f"{p}: imus 는 사전이어야 함")
+
     safety_raw = data.get("safety") or {}
     telemetry_raw = data.get("telemetry") or {}
     _check_keys(f"{p}: safety", safety_raw, SAFETY_KEYS)
     _check_keys(f"{p}: telemetry", telemetry_raw, TELEMETRY_KEYS)
 
+    limbs = {n: _limb(n, d, base_dir=p.parent) for n, d in limbs_raw.items()}
+    imus = {n: _imu(n, d) for n, d in imus_raw.items()}
+
+    # 붙은 자리가 팔다리 이름이면 그런 팔다리가 있어야 함. `torso` 처럼 팔다리가
+    # 아닌 자리는 그대로 둠 -- 몸통은 limbs 에 없음.
+    for imu in imus.values():
+        if imu.mount and imu.mount not in limbs and imu.mount not in NON_LIMB_MOUNTS:
+            raise ConfigError(
+                f"{p}: imus.{imu.name}.mount 가 {imu.mount!r} 인데 그런 팔다리가 없음 "
+                f"(팔다리: {sorted(limbs)}, 팔다리가 아닌 자리: {sorted(NON_LIMB_MOUNTS)})"
+            )
+
     try:
         return RobotConfig(
             name=str(data.get("name") or p.stem),
-            limbs={n: _limb(n, d, base_dir=p.parent) for n, d in limbs_raw.items()},
+            limbs=limbs,
+            imus=imus,
             safety=SafetyConfig(**_pick(safety_raw, SAFETY_KEYS)),
             telemetry=TelemetryConfig(**_pick(telemetry_raw, TELEMETRY_KEYS)),
             source_path=p,

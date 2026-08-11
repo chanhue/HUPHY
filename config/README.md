@@ -159,6 +159,27 @@ telemetry:
 
 매 주기 디스크에 쓰면 제어 주기가 튐.
 
+### IMU
+
+```yaml
+imus:
+  main:                       # 개체 이름. 텔레메트리 필드 앞에 붙음
+    model: xsens_mti          # sensors/registry.py 의 키
+    port: /dev/xsens_mti      # udev 로 고정한 심볼릭 링크
+    baudrate: 921600          # 센서에 저장된 값과 같아야 함
+    mount: right_leg          # 어디 붙었는지
+```
+
+`limbs` 와 나란히 있음. 같은 센서가 다리에 붙었다가 몸통으로 옮겨가므로, 팔다리
+안에 두면 옮길 때 설정 구조와 필드 이름이 같이 바뀜.
+
+`mount` 는 팔다리 이름이거나 `torso` `pelvis` `head` 임. 팔다리 이름인데 그런
+팔다리가 없으면 멈춤. 한 포트를 두 IMU 가 써도 멈춤.
+
+`baudrate` 가 센서 설정과 다르면 **조용히 아무 패킷도 안 들어옴.**
+
+IMU 가 없어도 로봇은 그대로 돎. 자세한 것은 `src/huphy/sensors/README.md` 참조.
+
 ### 경로
 
 `calibration:` 의 상대 경로는 **`robot.yaml` 이 있는 폴더 기준**으로 풀림. 실행

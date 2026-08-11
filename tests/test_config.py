@@ -375,3 +375,75 @@ class TestSchema:
                             motors={"j": Motor(id=3, model="RS02")}),
         })
         assert r.channels == ("can1", "can0")
+
+
+# ===========================================================================
+# imus — 팔다리와 나란히 있음
+# ===========================================================================
+IMU_YAML = BASE + """
+imus:
+  main:
+    model: xsens_mti
+    port: /dev/xsens_mti
+    mount: right_leg
+"""
+
+
+class TestImus:
+    def test_read_into_the_robot(self, write):
+        robot = load_robot(write(IMU_YAML))
+        assert robot.imus["main"].model == "xsens_mti"
+        assert robot.imus["main"].port == "/dev/xsens_mti"
+
+    def test_the_key_becomes_the_name(self, write):
+        """텔레메트리 필드 앞에 붙는 이름임."""
+        assert load_robot(write(IMU_YAML)).imus["main"].name == "main"
+
+    def test_none_is_fine(self, write):
+        """IMU 가 없어도 로봇은 돎."""
+        assert load_robot(write(BASE)).imus == {}
+
+    def test_default_baudrate(self, write):
+        assert load_robot(write(IMU_YAML)).imus["main"].baudrate == 921600
+
+    def test_model_is_required(self, write):
+        bad = BASE + "\nimus:\n  main:\n    port: /dev/x\n"
+        with pytest.raises(ConfigError, match="model 항목이 없음"):
+            load_robot(write(bad))
+
+    def test_port_is_required(self, write):
+        bad = BASE + "\nimus:\n  main:\n    model: xsens_mti\n"
+        with pytest.raises(ConfigError, match="port 항목이 없음"):
+            load_robot(write(bad))
+
+    def test_a_typo_is_refused(self, write):
+        bad = BASE + "\nimus:\n  main:\n    model: x\n    port: /dev/x\n    baud: 9600\n"
+        with pytest.raises(ConfigError, match="모르는 키"):
+            load_robot(write(bad))
+
+    def test_mount_must_name_a_real_limb(self, write):
+        bad = IMU_YAML.replace("mount: right_leg", "mount: left_leg")
+        with pytest.raises(ConfigError, match="그런 팔다리가 없음"):
+            load_robot(write(bad))
+
+    def test_the_torso_is_not_a_limb(self, write):
+        """몸통은 limbs 에 없음. 가짜 팔다리를 적게 하면 안 됨."""
+        moved = IMU_YAML.replace("mount: right_leg", "mount: torso")
+        assert load_robot(write(moved)).imus["main"].mount == "torso"
+
+    def test_two_imus_cannot_share_a_port(self, write):
+        bad = IMU_YAML + "  spare:\n    model: xsens_mti\n    port: /dev/xsens_mti\n"
+        with pytest.raises(ConfigError, match="같이 씀"):
+            load_robot(write(bad))
+
+
+class TestImusOn:
+    def test_picks_only_that_limb(self, write):
+        robot = load_robot(write(IMU_YAML))
+        assert list(robot.imus_on("right_leg")) == ["main"]
+
+    def test_moving_it_away_leaves_the_limb_empty(self, write):
+        """다리에서 몸통으로 옮기면 설정 한 줄만 바뀜."""
+        robot = load_robot(write(IMU_YAML.replace("mount: right_leg", "mount: torso")))
+        assert robot.imus_on("right_leg") == {}
+        assert list(robot.imus_on("torso")) == ["main"]

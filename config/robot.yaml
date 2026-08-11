@@ -23,10 +23,20 @@ safety:
   enforce_limits: true      # false 는 커미셔닝 전용
 
 telemetry:
-  host: null                # 비우면 UDP 송신 안 함
+  host: 192.168.0.15                # 비우면 UDP 송신 안 함
   port: 9870
   csv_path: null
   csv_flush_every: 50
+
+imus:
+  # 개체 이름이 키이고, 그 이름이 텔레메트리 필드 앞에 붙음 (imu/main/roll).
+  # mount 는 어디 붙었는지임 -- 다리에서 몸통으로 옮기면 이 한 줄만 바뀜.
+  # port 는 udev 로 고정한 심볼릭 링크를 쓸 것. USB 는 순서대로 번호가 붙음.
+  main:
+    model: xsens_mti
+    port: /dev/xsens_mti
+    baudrate: 921600
+    mount: right_leg
 
 limbs:
   # 개체 이름이 키임. kind 는 어떤 기구학을 쓰는지, side 는 거울상인지를 말함.

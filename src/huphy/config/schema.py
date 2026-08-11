@@ -90,6 +90,51 @@ class TelemetryConfig:
 
 
 @dataclass(frozen=True)
+class ImuConfig:
+    """IMU 하나. **로봇 아래에 있고, 어디 붙었는지는 `mount` 가 말함.**
+
+    팔다리 안에 두지 않는 이유: 같은 센서가 다리에 붙었다가 몸통으로 옮겨감. 팔다리
+    안에 두면 옮길 때 설정 구조가 바뀌고 텔레메트리 필드 이름도 따라 바뀜.
+    """
+
+    name: str
+    """개체 이름. `imus` 의 키와 같음. **텔레메트리 필드 앞에 붙음.**"""
+
+    model: str
+    """어느 센서인지. `sensors.registry.MODELS` 가 구현체로 품.
+
+    `Motor.model` 과 같은 자리임 -- 이 계층은 벤더를 모르고, 유효한지는 센서 모듈이
+    판단함.
+    """
+
+    port: str
+    """시리얼 장치 경로.
+
+    **udev 로 고정한 심볼릭 링크를 쓸 것.** USB 는 꽂는 순서대로 `ttyUSB0`,
+    `ttyUSB1` 이 붙어 재부팅마다 달라짐.
+    """
+
+    baudrate: int = 921600
+    """센서에 저장된 값과 반드시 같아야 함. 다르면 조용히 아무 패킷도 안 들어옴."""
+
+    mount: Optional[str] = None
+    """어디에 붙었는지. 팔다리 이름이거나 `torso` 처럼 팔다리가 아닌 자리.
+
+    `None` 이면 아직 안 정한 것임. 다리에서 몸통으로 옮길 때 **여기 한 줄만** 바뀜.
+    """
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("IMU 이름이 비어 있음")
+        if not self.model:
+            raise ValueError(f"{self.name}: model 이 비어 있음")
+        if not self.port:
+            raise ValueError(f"{self.name}: port 가 비어 있음")
+        if self.baudrate <= 0:
+            raise ValueError(f"{self.name}: baudrate 는 0보다 커야 함 (받은 값 {self.baudrate})")
+
+
+@dataclass(frozen=True)
 class LimbConfig:
     """팔다리 하나. **CAN 채널 하나에 대응함.**
 
@@ -181,6 +226,9 @@ class RobotConfig:
 
     name: str
     limbs: Dict[str, LimbConfig] = field(default_factory=dict)
+    imus: Dict[str, ImuConfig] = field(default_factory=dict)
+    """개체 이름 -> IMU. 팔다리와 나란히 있음. 없어도 로봇은 돎."""
+
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     source_path: Optional[Path] = None
@@ -189,6 +237,16 @@ class RobotConfig:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("로봇 이름이 비어 있음")
+
+        # 한 포트를 두 IMU 가 쓰면 둘 다 제대로 못 읽음. 같은 바이트열을 나눠 갖게 됨.
+        ports: Dict[str, str] = {}
+        for imu in self.imus.values():
+            if imu.port in ports:
+                raise ValueError(
+                    f"{imu.port} 를 {ports[imu.port]} 와 {imu.name} 가 같이 씀. "
+                    f"한 포트를 둘이 읽으면 바이트열이 나뉘어 둘 다 깨짐"
+                )
+            ports[imu.port] = imu.name
 
         # 채널이 겹치면 두 팔다리가 같은 선을 쓰는 것이므로, id 도 겹치면 안 됨.
         by_channel: Dict[str, list] = {}
@@ -217,6 +275,14 @@ class RobotConfig:
     def limbs_of_kind(self, kind: str) -> Dict[str, LimbConfig]:
         """종류로 골라냄. 두 다리에 같은 처리를 걸 때 씀."""
         return {n: l for n, l in self.limbs.items() if l.kind == kind}
+
+    def imus_on(self, mount: str) -> Dict[str, ImuConfig]:
+        """그 자리에 붙은 IMU 들. 없으면 빈 사전.
+
+        조립할 때 `imus_on(limb.name)` 으로 그 팔다리 몫만 가져감. 몸통으로 옮기면
+        여기서 안 걸리고, 다리 코드는 손댈 일이 없음.
+        """
+        return {n: i for n, i in self.imus.items() if i.mount == mount}
 
     @property
     def channels(self) -> Tuple[str, ...]:
