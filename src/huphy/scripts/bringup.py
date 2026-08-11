@@ -53,6 +53,7 @@ from ..motors.base import Gains
 from ..motors.canbus import CanBus
 from ..motors.robstride.bus import RobStrideBus
 from ..robots.leg import ANKLE_JOINTS, SINGLE_JOINTS, Leg
+from ..sensors import make_imu
 from . import table
 from .commission import CONFIG_NAME, _find_config, _pick_limb
 
@@ -103,7 +104,26 @@ def build_leg(
         safety=robot.safety,
         kinematics=AnkleKinematics(geometry),
         allow_uncalibrated=allow_uncalibrated,
+        imus=_imus_on(robot, limb),
     )
+
+
+def _imus_on(robot: RobotConfig, limb: LimbConfig) -> List[object]:
+    """이 팔다리에 붙은 IMU 만 만듦. 없으면 빈 목록.
+
+    어디에 붙었는지는 설정의 `mount` 가 정함. 몸통으로 옮기면 여기서 안 걸리고,
+    다리 코드는 손댈 일이 없음.
+
+    **만들지 못해도 다리는 만듦.** 모르는 model 이나 빠진 의존성 때문에 다리를 못
+    쓰게 되면, 센서가 고장 났을 때 로봇을 안전한 자세로 되돌릴 수도 없음.
+    """
+    out: List[object] = []
+    for config in robot.imus_on(limb.name).values():
+        try:
+            out.append(make_imu(config))
+        except Exception as e:
+            logger.warning("IMU %s 를 만들지 못함 (없이 진행함): %s", config.name, e)
+    return out
 
 
 # ===========================================================================
@@ -164,6 +184,8 @@ def show_state(leg: Leg, loop: ControlLoop) -> None:
     if pose is not None:
         print(f"\n  발목  pitch {pose[0]:7.2f}   roll {pose[1]:7.2f}")
 
+    show_imus(leg)
+
     outside = _outside_limits(leg, observation)
     if outside:
         print(
@@ -178,6 +200,28 @@ def show_state(leg: Leg, loop: ControlLoop) -> None:
         print(f"\n  미실측: {list(unmeasured)}  (cal 이 raw 와 같음)")
     if not leg.config.is_configured:
         print(f"  게인·한계 미설정: {list(leg.config.unconfigured())}")
+
+
+def show_imus(leg: Leg) -> None:
+    """붙은 IMU 의 자세와 마지막 패킷 이후 경과. 없으면 아무것도 안 냄.
+
+    **`마지막 값` 이 진짜 신호임.** 센서가 멈춰도 자세는 그럴듯한 숫자로 남아
+    있어서, 값만 보면 살아 있는지 알 수 없음.
+    """
+    if not leg.imus:
+        return
+
+    print("\n  " + table.header(
+        ("IMU", 10, "<"), ("roll", 9), ("pitch", 9), ("yaw", 9), ("마지막 값", 12),
+    ))
+    for name, state in leg.imu_states().items():
+        if not state.is_valid:
+            print(f"  {name:<10} {table.cell('응답 없음', 9)}")
+            continue
+        print(
+            f"  {name:<10} {state.roll_deg:9.2f} {state.pitch_deg:9.2f} "
+            f"{state.yaw_deg:9.2f} {table.cell(_age_text(state.age_ms()), 12)}"
+        )
 
 
 def _outside_limits(leg: Leg, observation) -> List[Tuple[str, float, Tuple[float, float]]]:

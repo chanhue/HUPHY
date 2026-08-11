@@ -427,3 +427,115 @@ class TestMenu:
     def test_missing_config(self, fake_can, tmp_path):
         with pytest.raises(SystemExit, match="설정 파일이 없음"):
             bringup.main(["--config", str(tmp_path / "없음.yaml")])
+
+
+# ===========================================================================
+# IMU — 붙었을 때만 보임
+# ===========================================================================
+IMU_YAML = ROBOT_YAML + """
+imus:
+  main:
+    model: xsens_mti
+    port: /dev/fake_imu
+    mount: right_leg
+"""
+
+
+class FakeImu:
+    """`Imu` 프로토콜 자리. 시리얼을 열지 않음."""
+
+    def __init__(self, name="main", valid=True):
+        self.name = name
+        self.valid = valid
+        self.connected = False
+
+    @property
+    def is_connected(self):
+        return self.connected
+
+    def connect(self):
+        self.connected = True
+
+    def disconnect(self):
+        self.connected = False
+
+    def read(self):
+        from huphy.sensors.base import ImuState
+        import time
+
+        if not self.valid:
+            return ImuState()
+        return ImuState(
+            roll_deg=1.5, pitch_deg=-2.5, yaw_deg=30.0,
+            stamp=time.monotonic(), is_valid=True,
+        )
+
+
+@pytest.fixture
+def imu_cfg(tmp_path):
+    (tmp_path / "config" / "calibration").mkdir(parents=True)
+    robot = tmp_path / "config" / "robot.yaml"
+    robot.write_text(IMU_YAML, encoding="utf-8")
+    (tmp_path / "config" / "calibration" / "right_leg.json").write_text(
+        json.dumps(CALIBRATION, ensure_ascii=False), encoding="utf-8"
+    )
+    return robot
+
+
+@pytest.fixture
+def imu_menu(fake_can, imu_cfg, monkeypatch, capsys):
+    """설정의 IMU 를 가짜로 바꿔 메뉴를 돌림."""
+    made = []
+
+    def fake_make(config):
+        imu = FakeImu(config.name)
+        made.append(imu)
+        return imu
+
+    monkeypatch.setattr(bringup, "make_imu", fake_make)
+
+    def _run(inputs, *argv):
+        it = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        code = bringup.main(["--config", str(imu_cfg), "--limb", "right_leg", *argv])
+        return code, capsys.readouterr().out, made
+    return _run
+
+
+class TestImuOnTheLeg:
+    def test_it_opens_with_the_leg(self, imu_menu):
+        """설정에 적으면 따로 명령할 것 없이 같이 열려야 함."""
+        _, _, made = imu_menu(["q"])
+        assert len(made) == 1
+
+    def test_the_state_screen_shows_it(self, imu_menu):
+        _, out, _ = imu_menu(["1", "q"])
+        assert "IMU" in out
+        assert "main" in out
+
+    def test_it_shows_the_attitude(self, imu_menu):
+        _, out, _ = imu_menu(["1", "q"])
+        assert "1.50" in out and "-2.50" in out and "30.00" in out
+
+    def test_a_silent_sensor_says_so(self, imu_menu, monkeypatch):
+        """자세는 멈춰도 그럴듯한 숫자로 남음. 살아 있는지는 따로 말해야 함."""
+        monkeypatch.setattr(bringup, "make_imu", lambda c: FakeImu(c.name, valid=False))
+        _, out, _ = imu_menu(["1", "q"])
+        assert "응답 없음" in out
+
+    def test_no_imu_adds_no_table(self, menu):
+        """IMU 가 없는 설정에서는 화면이 전과 같아야 함."""
+        _, out = menu(["1", "q"])
+        assert "IMU" not in out
+
+    def test_a_broken_sensor_does_not_stop_the_leg(self, fake_can, imu_cfg, monkeypatch, capsys):
+        """IMU 는 관측이지 제어가 아님. 못 열어도 다리는 써야 함."""
+        def boom(config):
+            raise RuntimeError("포트가 없음")
+
+        monkeypatch.setattr(bringup, "make_imu", boom)
+        it = iter(["1", "q"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        code = bringup.main(["--config", str(imu_cfg), "--limb", "right_leg"])
+        assert code == 0
+        assert "knee" in capsys.readouterr().out

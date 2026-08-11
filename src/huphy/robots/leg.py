@@ -46,7 +46,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import replace
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from .. import calibration as calib
 from ..config.schema import LimbConfig, SafetyConfig
@@ -85,12 +85,20 @@ class Leg(Robot):
         calibration: Optional[Mapping[str, MotorCalibration]] = None,
         kinematics: Optional[AnkleKinematics] = None,
         allow_uncalibrated: bool = False,
+        imus: Optional[Sequence[Any]] = None,
     ) -> None:
         self.config = config
         self.id = config.name
         self.bus = bus
         self.safety = safety if safety is not None else SafetyConfig()
         self.allow_uncalibrated = allow_uncalibrated
+
+        self.imus: Tuple[Any, ...] = tuple(imus or ())
+        """이 다리에 붙은 IMU 들. **없어도 다리는 그대로 돎.**
+
+        어느 다리에 붙었는지는 설정(`ImuConfig.mount`)이 정하고, 조립하는 쪽이
+        골라서 넣어 줌. 다리는 어느 회사 센서인지 모름 -- `sensors.base.Imu` 만 봄.
+        """
 
         missing = [m for m in REQUIRED_MOTORS if m not in config.motors]
         if missing:
@@ -187,9 +195,36 @@ class Leg(Robot):
     def connect(self) -> None:
         self.bus.connect()
         self.refresh()
+        self._connect_imus()
 
     def disconnect(self) -> None:
+        for imu in self.imus:
+            try:
+                imu.disconnect()
+            except Exception as e:
+                logger.warning("%s IMU 종료 실패: %s", self.id, e)
         self.bus.disconnect()
+
+    def _connect_imus(self) -> None:
+        """IMU 를 엶. **실패해도 다리는 계속 씀.**
+
+        IMU 는 관측이지 제어가 아님. 센서가 안 붙어 있다고 다리를 못 움직이면,
+        고장 났을 때 로봇을 안전한 자세로 되돌리는 것조차 못 하게 됨.
+        """
+        for imu in self.imus:
+            try:
+                imu.connect()
+            except Exception as e:
+                logger.warning(
+                    "%s IMU %s 를 열지 못함 (다리는 계속 씀): %s", self.id, imu.name, e
+                )
+
+    def imu_states(self) -> Dict[str, Any]:
+        """붙은 IMU 들의 최신 값. 개체 이름 -> `ImuState`.
+
+        **새로 통신하지 않음.** 벤더 구현이 백그라운드로 받아 둔 것을 꺼내기만 함.
+        """
+        return {imu.name: imu.read() for imu in self.imus}
 
     def enable(self) -> None:
         """토크를 넣음. **캘리브레이션과 설정이 채워져 있어야 함.**
