@@ -4,18 +4,19 @@
 tests/
 ├── test_safety.py          safety/                     42개
 ├── test_codec.py           robstride 사양·코덱          31개
-├── test_base.py            motors/base.py              45개
+├── test_base.py            motors/base.py              44개
 ├── test_canbus.py          motors/canbus.py            33개
 ├── test_robstride_bus.py   robstride/bus.py            40개
 ├── test_commissioning.py   robstride/commissioning.py  46개
-├── test_config.py          config/                     46개
+├── test_config.py          config/                     58개
 ├── test_calibration.py     calibration/                38개
-├── test_commission_cli.py  scripts/commission.py       52개
+├── test_commission_cli.py  scripts/commission.py       71개
 ├── test_ankle.py           kinematics/ankle.py        149개
-├── test_leg.py             robots/leg.py               42개
-├── test_telemetry.py       telemetry/                  43개
-├── test_control.py         control/                    43개
-├── test_bringup.py         scripts/bringup.py          26개
+├── test_leg.py             robots/leg.py               50개
+├── test_sensors.py         sensors/                    21개
+├── test_telemetry.py       telemetry/                  52개
+├── test_control.py         control/                    45개
+├── test_bringup.py         scripts/bringup.py          36개
 └── test_selftest.py        scripts/selftest.py         27개
 ```
 
@@ -28,7 +29,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-710 passed in 11.3s
+783 passed in 13.9s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -89,7 +90,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestDecodeState` | 4 | 상태 프레임 해석 |
 | `TestDecodeFault` | 4 | 고장 워드 해석 |
 
-### `test_base.py` — 45개
+### `test_base.py` — 44개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -139,7 +140,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestSweep` | 9 | 최대·최소 기록, 토크 차단, 오프셋 반영, ±180 경계 |
 | `TestMeasureOffset` | 4 | 지금 자세가 0도, 토크 차단, 무응답 거부 |
 
-### `test_config.py` — 46개
+### `test_config.py` — 58개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -161,7 +162,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestAttach` | 6 | 모터 id 재키잉, 관절 이름 불일치 |
 | `TestUnmeasured` | 5 | 메모 기준 판정 |
 
-### `test_commission_cli.py` — 52개
+### `test_commission_cli.py` — 71개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -190,7 +191,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 `TestSolveFk` 가 큰 것은 시험 범위 격자 187개를 도는 매개변수 테스트 때문임 —
 **추정 `(0, 0)` 으로도 항상 원래 자세를 찾는지**를 범위 전체에서 확인함.
 
-### `test_leg.py` — 42개
+### `test_leg.py` — 50개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -204,20 +205,33 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestMirroredLeg` | 1 | 좌우 대칭 |
 | `TestLinkStatus` | 7 | ack, age, miss, since_* |
 
-### `test_telemetry.py` — 36개
+### `test_sensors.py` — 21개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestImuState` | 4 | 모르는 것과 0의 구분, age |
+| `TestRegistry` | 4 | model 풀기, 만들 때 포트 안 엶 |
+| `TestXsensLifecycle` | 5 | 두 번 열고 닫기, 보드레이트 전달 |
+| `TestXsensRead` | 7 | 단위 변환, 빠진 필드, 멈춘 센서 |
+
+리더를 가짜로 갈아 끼움 — `pyserial` 없이 돌아야 함.
+
+### `test_telemetry.py` — 52개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
 | `TestFieldNames` | 8 | 실행 전 목록, 빠른 것/진단 분리 |
 | `TestBuild` | 8 | 오차, 실제로 나간 목표, 없는 카운터 |
 | `TestUdp` | 10 | 진짜 소켓 왕복, 반올림, MTU, 실패 |
-| `TestCsv` | 8 | 헤더, 열 순서, flush, 실패 |
+| `TestCsv` | 9 | 헤더, 열 순서, flush, 실패 |
 | `TestTelemetry` | 8 | 둘이 같은 스냅샷, 진단 감축 |
+| `TestImuFields` | 7 | IMU 개체 이름 접두, 없을 때 열 |
+| `TestImuPacket` | 2 | 다리와 별도 패킷 |
 
 UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬화와 반올림이 실제로
 왕복하는지 확인함.
 
-### `test_control.py` — 43개
+### `test_control.py` — 45개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -228,7 +242,7 @@ UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬
 | `TestTelemetryHookup` | 5 | 기록 실패가 루프를 안 멈춤 |
 | `TestStep` | 2 | 한 걸음씩 |
 
-### `test_bringup.py` — 26개
+### `test_bringup.py` — 36개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -238,6 +252,7 @@ UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬
 | `TestTorqueGate` | 3 | 미실측이면 토크 거부 |
 | `TestMotionItems` | 5 | 계단·사인파·이동, 잘못된 입력 |
 | `TestMenu` | 5 | 항목 표시, 종료 시 토크 차단 |
+| `TestImuOnTheLeg` | 6 | 다리와 같이 열림, 상태 표에 나옴 |
 
 메뉴를 실제로 돌림 — `builtins.input` 을 미리 넣은 값으로 갈아끼움. 루프가 실제로
 도는 항목이 있어 **이 파일이 가장 오래 걸림**(약 7초).

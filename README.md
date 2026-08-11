@@ -152,6 +152,7 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -e .            # python-can, numpy, PyYAML
 pip install -e ".[dev]"     # + pytest
+pip install -e ".[imu]"     # + pyserial. IMU 를 붙일 때만
 ```
 
 `-e` 는 **소스를 그대로 씀.** 코드를 고치면 다시 설치하지 않아도 바로 반영됨.
@@ -160,7 +161,7 @@ pip install -e ".[dev]"     # + pytest
 ### 확인
 
 ```bash
-python -m pytest tests -q          # 735 passed
+python -m pytest tests -q          # 783 passed
 huphy-commission --help
 ```
 
@@ -787,6 +788,12 @@ motors/           모터 id 와 raw 각도만 앎
    ├─ canbus.py       CAN 전송. python-can 유일 사용처
    └─ robstride/      벤더 사양, 코덱, 버스, 커미셔닝
    │
+sensors/          모터가 아닌 센서. IMU
+   │
+   ├─ base.py         ImuState, Imu. 벤더 중립
+   ├─ registry.py     model 문자열 -> 구현체
+   └─ xsens/          Xsens MTi. 시리얼 Xbus
+   │
 telemetry/        옆에서 관찰. 제어를 방해하지 않음
 ```
 
@@ -807,7 +814,7 @@ telemetry/        옆에서 관찰. 제어를 방해하지 않음
 canbus.py    ← 여기 하나뿐
 ```
 
-그 위는 `CanFrame` 만 다룸. 그래서 **테스트 735개가 `python-can` 없이 돌아감.**
+그 위는 `CanFrame` 만 다룸. 그래서 **테스트 783개가 `python-can` 없이 돌아감.**
 
 ---
 
@@ -1002,7 +1009,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-735 passed in 12.5s
+783 passed in 13.9s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
