@@ -427,9 +427,14 @@ def run_menu(leg: Leg, loop: ControlLoop) -> None:
 
         label, handler, needs_torque = MENU[int(choice) - 1]
         if needs_torque and not leg.is_calibrated and not leg.allow_uncalibrated:
+            # 두 가지를 다 냄. 판정이 둘의 곱이라 한쪽만 내면 빈 목록을 보여주며
+            # 거부하는 일이 생김 -- 사람이 무엇을 채워야 할지 알 수 없음.
             print(
                 f"\n  {label} 은 토크가 필요한데 실측값이 채워지지 않음.\n"
-                f"  미실측 관절 {list(calib.unmeasured(leg.calibration))}\n"
+                f"  미실측 관절 (zero_reference 없음) "
+                f"{list(calib.unmeasured(leg.calibration))}\n"
+                f"  미설정 관절 (limits_deg 나 kp 없음) "
+                f"{list(leg.config.unconfigured())}\n"
                 f"  확인했으면 --allow-uncalibrated 로 다시 실행할 것"
             )
             continue
