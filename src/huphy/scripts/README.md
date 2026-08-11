@@ -390,6 +390,10 @@ menu -> motion -> ControlLoop -> Leg -> bus
 
 처지면 `kp` 부족, 떨리면 `kp` 과함.
 
+관절을 고르지 않고 여섯 개를 전부 붙잡음. 목표는 시작할 때 한 번 정하고 그대로 둠.
+발목은 FK 로 풀어 `ankle_pitch`/`ankle_roll` 목표를 만듦. 목표를 못 정한 관절은
+이름을 내고 빠짐.
+
 ### 한 관절 옮기기 [토크]
 
 한 관절만 지금 자리에서 조금 옮김. 나머지는 지금 자리에 붙잡아 둠.
@@ -510,5 +514,5 @@ Ctrl-Q 는 `QuitWatcher` 가 별도 스레드에서 봄. 터미널을 cbreak 로
 PYTHONPATH=src python3 -m pytest tests/test_commission_cli.py tests/test_bringup.py tests/test_selftest.py -q
 ```
 
-`commission` 68개, `bringup` 26개, `selftest` 27개. 가짜 모터가 붙은 가짜 CAN 버스에
+`commission` 71개, `bringup` 30개, `selftest` 27개. 가짜 모터가 붙은 가짜 CAN 버스에
 대고 명령줄과 메뉴를 그대로 돌림. 설정 파일은 임시 폴더에 만들어 씀.

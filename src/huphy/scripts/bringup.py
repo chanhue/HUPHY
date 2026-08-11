@@ -343,12 +343,37 @@ def hold_pose(leg: Leg, loop: ControlLoop) -> None:
 
     여기서 처지면 `kp` 가 부족하고, 떨리면 `kp` 가 과함. 여기서 떨리면 어떤 동작을
     시켜도 떨림.
+
+    **발목은 여기서 FK 로 채움.** 관찰은 모터 단위(`ankle_a1`, `ankle_a2`)로만
+    나오고 액션은 관절 단위(`ankle_pitch`, `ankle_roll`)로 받으므로, 지금 자세를
+    목표로 삼으려면 한 번 풀어야 함. FK 는 뉴턴 반복이라 여기서 한 번만 부름 --
+    IK 는 닫힌 해라 매 주기 돌아도 됨.
     """
     seconds = _ask("얼마나 (초)", DEFAULT_RUN_S)
     if seconds is None:
         return
+
+    observation = leg.get_observation()
+    targets = {
+        joint: value
+        for joint in SINGLE_JOINTS
+        if (value := observation.get(f"{joint}.pos")) is not None
+    }
+    pose = leg.ankle_pose()
+    if pose is not None:
+        targets["ankle_pitch"], targets["ankle_roll"] = pose
+
+    missing = [j for j in leg.joint_names if j not in targets]
+    if not targets:
+        print("\n  지금 자세를 알 수 없음. 먼저 상태를 읽을 것")
+        return
+    if missing:
+        # 토크는 넣되 무엇이 빠졌는지 밝힘. 빠진 관절은 명령을 안 받으므로 모터
+        # 내부 목표를 붙잡음 -- 가만히 있는 것이 아니라 그쪽으로 움직임.
+        print(f"\n  ** 목표를 못 정한 관절 {missing} -- 이 관절은 붙잡지 못함 **")
+
     print("\n  지금 자세를 붙잡음. 처지나, 떨리나 볼 것")
-    _run(loop, motions.freeze(list(leg.joint_names)), seconds=seconds)
+    _run(loop, motions.hold(targets), seconds=seconds)
 
 
 def _current_joint_value(leg: Leg, joint: str, observation) -> Optional[float]:

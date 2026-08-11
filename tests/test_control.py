@@ -131,6 +131,21 @@ class TestMotions:
         """상태를 못 받았으면 그 주기는 명령하지 않음."""
         assert motions.freeze(["knee"])(0.0, {}) is None
 
+    def test_freeze_keeps_the_joints_it_could_read(self):
+        """관찰에 없는 관절 하나 때문에 전부를 버리지 않음.
+
+        전부를 버리면 토크가 켜진 채 명령이 한 개도 안 나가고, 그때 모터는 자기
+        내부 목표를 붙잡으므로 다리가 그쪽으로 움직임.
+        """
+        m = motions.freeze(["knee", "ankle_pitch"])
+        assert m(0.0, {"knee.pos": 12.5}) == {"knee": 12.5}
+
+    def test_freeze_holds_what_it_captured_first(self):
+        """뒤늦게 나타난 관절을 나중에 끼워 넣지 않음. 목표가 도중에 바뀌면 튐."""
+        m = motions.freeze(["knee", "ankle_pitch"])
+        m(0.0, {"knee.pos": 12.5})
+        assert m(1.0, {"knee.pos": 12.5, "ankle_pitch.pos": 3.0}) == {"knee": 12.5}
+
     def test_step_jumps_at_the_given_time(self):
         m = motions.step("knee", start=0.0, end=30.0, at_s=1.0)
         assert m(0.5, {})["knee"] == 0.0

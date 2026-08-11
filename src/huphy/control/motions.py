@@ -54,6 +54,11 @@ def freeze(joints: Sequence[str], *, from_observation: bool = True):
 
     제어를 시작할 때 첫 동작으로 씀. 목표를 0으로 잡고 시작하면 다리가 0을 향해
     한 번에 움직임.
+
+    **관찰에 없는 관절은 빼고 나머지를 잡음.** 하나 때문에 전부를 버리면 토크가
+    켜진 채로 명령이 한 개도 안 나가는데, 그때 모터는 자기 내부 목표를 붙잡으므로
+    다리가 그쪽으로 움직임 -- 아무것도 안 하는 것이 아님. 하나도 못 잡았을 때만
+    `None` 을 냄.
     """
     captured: Dict[str, float] = {}
 
@@ -61,9 +66,10 @@ def freeze(joints: Sequence[str], *, from_observation: bool = True):
         if not captured:
             for joint in joints:
                 value = observation.get(f"{joint}.pos")
-                if value is None:
-                    return None          # 아직 상태를 못 받음. 이번 주기는 건너뜀
-                captured[joint] = float(value)
+                if value is not None:
+                    captured[joint] = float(value)
+            if not captured:
+                return None          # 아직 아무 상태도 못 받음. 이번 주기는 건너뜀
         return dict(captured)
 
     return motion

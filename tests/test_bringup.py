@@ -335,6 +335,52 @@ class TestTorqueGate:
 # ===========================================================================
 # 동작 항목
 # ===========================================================================
+class TestHoldPose:
+    """자세 유지는 관절 여섯 개를 **전부** 명령해야 함.
+
+    발목은 관찰에 모터(`ankle_a1`, `ankle_a2`)로만 나오고 액션은 관절
+    (`ankle_pitch`, `ankle_roll`)로 받음. 지금 자세를 목표로 삼으려면 FK 를 한 번
+    거쳐야 하는데, 이걸 빠뜨리면 액션이 통째로 비어 **토크만 켜진 채 명령이 한 개도
+    안 나감.** 그때 모터는 자기 내부 목표를 붙잡으므로 다리가 그쪽으로 움직임.
+    """
+
+    @pytest.fixture
+    def commanded(self, fake_can, cfg, monkeypatch, capsys):
+        """자세 유지를 한 번 돌리고, 로봇이 받은 액션들을 돌려줌."""
+        from huphy.robots.leg import Leg
+
+        seen = []
+        original = Leg.build_commands
+
+        def spy(self, action):
+            seen.append(dict(action))
+            return original(self, action)
+
+        monkeypatch.setattr(Leg, "build_commands", spy)
+        it = iter(["3", "0.05", "q"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+        bringup.main(["--config", str(cfg), "--limb", "right_leg"])
+        return seen, capsys.readouterr().out
+
+    def test_it_commands_something(self, commanded):
+        actions, _ = commanded
+        assert actions, "명령이 한 개도 나가지 않았음 -- 토크만 켜진 상태임"
+
+    def test_every_joint_is_held(self, commanded):
+        actions, _ = commanded
+        assert set(actions[0]) == set(bringup.SINGLE_JOINTS) | set(bringup.ANKLE_JOINTS)
+
+    def test_the_target_is_where_the_leg_is(self, commanded):
+        """지금 자세를 잡아야 함. 0을 목표로 잡으면 토크가 들어가는 순간 튐."""
+        actions, _ = commanded
+        assert actions[0]["hipz"] == pytest.approx(-60.0, abs=0.5)
+
+    def test_the_target_does_not_move(self, commanded):
+        """목표가 다리를 따라다니면 오차가 늘 0이라 복원력이 안 생김."""
+        actions, _ = commanded
+        assert all(a == actions[0] for a in actions)
+
+
 class TestMotionItems:
     def test_step_response_holds_the_others(self, menu):
         """여럿을 같이 흔들면 어느 관절이 원인인지 섞임."""

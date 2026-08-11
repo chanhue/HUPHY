@@ -160,7 +160,7 @@ pip install -e ".[dev]"     # + pytest
 ### 확인
 
 ```bash
-python -m pytest tests -q          # 729 passed
+python -m pytest tests -q          # 735 passed
 huphy-commission --help
 ```
 
@@ -807,7 +807,7 @@ telemetry/        옆에서 관찰. 제어를 방해하지 않음
 canbus.py    ← 여기 하나뿐
 ```
 
-그 위는 `CanFrame` 만 다룸. 그래서 **테스트 729개가 `python-can` 없이 돌아감.**
+그 위는 `CanFrame` 만 다룸. 그래서 **테스트 735개가 `python-can` 없이 돌아감.**
 
 ---
 
@@ -1002,7 +1002,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-729 passed in 12.5s
+735 passed in 12.5s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
