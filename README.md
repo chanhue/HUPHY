@@ -160,7 +160,7 @@ pip install -e ".[dev]"     # + pytest
 ### 확인
 
 ```bash
-python -m pytest tests -q          # 707 passed
+python -m pytest tests -q          # 729 passed
 huphy-commission --help
 ```
 
@@ -383,12 +383,10 @@ right_leg 영점: hipz, hipx, hipy, knee, ankle_a1, ankle_a2
 
 ### 무엇을 보나
 
-**`commission scan`** — 응답 없는 모터가 있으면 원인 후보를 같이 냄.
+**`commission scan`** — 응답하지 않는 모터를 냄.
 
 ```
 응답 없음: ['ankle_a2']
-  배선, 전원, CAN id, 프로토콜 모드가 후보임.
-  이 넷은 여기서 구분되지 않음 -- 전부 조용히 빠짐.
 ```
 
 **`commission nudge knee`** — 명령한 만큼 안 움직이면 알려줌.
@@ -564,9 +562,9 @@ huphy-commission --limb right_leg nudge knee --delta 5
 ```bash
 huphy-commission --limb right_leg sweep                # 전 관절
 huphy-commission --limb right_leg sweep knee           # 하나만
-huphy-commission --limb right_leg sweep --hz 50        # 초당 50번 (기본 20)
+huphy-commission --limb right_leg sweep 10             # id 로도 됨
 ```
-토크를 끄고 **관절마다 두 가지를 정함.**
+토크를 끄고 **관절마다 두 가지를 정함.** 초당 20번 재고, 시작할 때 화면에 알려줌.
 
 ```
   [4/5] knee
@@ -809,7 +807,7 @@ telemetry/        옆에서 관찰. 제어를 방해하지 않음
 canbus.py    ← 여기 하나뿐
 ```
 
-그 위는 `CanFrame` 만 다룸. 그래서 **테스트 707개가 `python-can` 없이 돌아감.**
+그 위는 `CanFrame` 만 다룸. 그래서 **테스트 729개가 `python-can` 없이 돌아감.**
 
 ---
 
@@ -1004,7 +1002,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-707 passed in 11.4s
+729 passed in 12.5s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**

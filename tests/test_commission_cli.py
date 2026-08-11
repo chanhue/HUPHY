@@ -11,6 +11,7 @@
 import argparse
 import json
 import math
+import os
 import sys
 import types
 from collections import deque
@@ -166,14 +167,6 @@ class TestScan:
         assert "응답 없음: ['ankle_a1']" in out.out
         assert code == 1
 
-    def test_names_the_four_candidates(self, run):
-        """응답 없음, 배선, 전원, 프로토콜 불일치가 여기서 구분되지 않음 (이슈 #11).
-
-        원인 후보를 알려주지 않으면 어디부터 봐야 할지 모름.
-        """
-        _, out = run("--limb", "right_leg", "scan")
-        assert "프로토콜" in out.out
-
     def test_success_when_all_answer(self, run):
         FakeBus.online = {10, 11}
         code, out = run("--limb", "right_leg", "scan")
@@ -260,6 +253,32 @@ class TestNudge:
     def test_tells_the_operator_to_support_the_leg(self, run):
         _, out = run("--limb", "right_leg", "nudge", "knee")
         assert "받쳐" in out.out
+
+
+class TestJointByCanId:
+    """이름 대신 CAN id 로도 고를 수 있음.
+
+    배선을 확인하는 중에는 어느 id 가 어느 관절인지 아직 모름 (이슈 #8). `scan` 과
+    `state` 가 id 를 같이 내므로 그 시점에는 id 로 부르는 것이 자연스러움.
+    """
+
+    def test_an_id_picks_the_same_joint(self, run):
+        code, out = run("--limb", "right_leg", "nudge", "10", "--delta", "5")
+        assert code == 0
+        assert "knee" in out.out          # 화면에는 이름으로 나옴
+
+    def test_an_unknown_id_is_refused(self, run):
+        with pytest.raises(SystemExit, match="관절이 없음"):
+            run("--limb", "right_leg", "nudge", "99")
+
+    def test_the_error_lists_both_ways(self, run):
+        """이름만 알려주면 id 를 쳤을 때 무엇이 틀렸는지 모름."""
+        with pytest.raises(SystemExit, match=r"id: \[10, 11\]"):
+            run("--limb", "right_leg", "nudge", "99")
+
+    def test_a_name_still_works(self, run):
+        code, _ = run("--limb", "right_leg", "nudge", "knee", "--delta", "5")
+        assert code == 0
 
 
 # ===========================================================================
@@ -487,3 +506,147 @@ class TestSweepNeedsAScreen:
         """단계마다 Enter 를 받음. 파이프에서는 받을 데가 없음."""
         with pytest.raises(SystemExit, match="화면에서 실행할 것"):
             run("--limb", "right_leg", "sweep", "knee")
+
+
+# ===========================================================================
+# sweep 결과 저장
+# ===========================================================================
+NAMES = {10: "knee", 11: "ankle_a1"}
+IDS = {name: mid for mid, name in NAMES.items()}
+
+
+def _results(**spans):
+    """관절 이름 -> 폭 으로 `sweep` 결과를 만듦. 폭 0은 안 움직인 관절임."""
+    from huphy.motors.robstride.commissioning import SweepResult
+
+    return {
+        IDS[joint]: SweepResult(
+            motor_id=IDS[joint], lo_deg=0.0, hi_deg=span, samples=10, offset_deg=-1.5
+        )
+        for joint, span in spans.items()
+    }
+
+
+@pytest.fixture
+def limb(cfg):
+    from huphy.config import load_robot
+
+    return load_robot(cfg).limb("right_leg")
+
+
+@pytest.fixture
+def saved(cfg):
+    def _saved():
+        path = cfg.parent / "calibration" / "right_leg.json"
+        return json.loads(path.read_text(encoding="utf-8"))["motors"]
+    return _saved
+
+
+class TestSweepSavesEachStep:
+    """단계가 끝날 때마다 씀. 도중에 끊겨도 앞서 잰 것이 남아야 함."""
+
+    def test_a_finished_step_is_on_disk(self, limb, saved):
+        commission._save_sweep(limb, _results(knee=30.0), NAMES)
+        assert saved()["knee"]["limits_deg"] == [0.0, 30.0]
+
+    def test_later_steps_do_not_erase_earlier_ones(self, limb, saved):
+        """단계마다 파일을 다시 읽고 쓰므로 앞 단계가 남아 있어야 함."""
+        commission._save_sweep(limb, _results(knee=30.0), NAMES)
+        commission._save_sweep(limb, _results(ankle_a1=25.0), NAMES)
+        assert saved()["knee"]["limits_deg"] == [0.0, 30.0]
+        assert saved()["ankle_a1"]["limits_deg"] == [0.0, 25.0]
+
+    def test_it_names_what_it_wrote(self, limb):
+        assert commission._save_sweep(limb, _results(knee=30.0), NAMES) == ["knee"]
+
+    def test_sign_and_zero_reference_survive(self, limb, saved):
+        """다른 곳에서 정해지는 값임. sweep 이 건드리지 않음."""
+        commission._save_sweep(limb, _results(knee=30.0), NAMES)
+        assert saved()["knee"]["sign"] == 1.0
+
+
+class TestSweepSkipsUnmovedJoints:
+    """폭이 0이면 한계각으로 쓸 수 없음. 그 관절만 빼고 나머지는 저장함."""
+
+    def test_an_unmoved_joint_does_not_block_the_others(self, limb, saved):
+        written = commission._save_sweep(
+            limb, _results(knee=30.0, ankle_a1=0.0), NAMES
+        )
+        assert written == ["knee"]
+        assert saved()["knee"]["limits_deg"] == [0.0, 30.0]
+
+    def test_an_unmoved_joint_keeps_its_old_limits(self, limb, saved):
+        commission._save_sweep(limb, _results(knee=30.0, ankle_a1=0.0), NAMES)
+        assert saved()["ankle_a1"]["limits_deg"] == [-79.77, 43.16]
+
+    def test_nothing_moved_writes_nothing(self, limb, cfg):
+        path = cfg.parent / "calibration" / "right_leg.json"
+        before = path.read_text(encoding="utf-8")
+        assert commission._save_sweep(limb, _results(knee=0.0), NAMES) == []
+        assert path.read_text(encoding="utf-8") == before
+
+    def test_the_report_names_them(self, limb, capsys):
+        code = commission._sweep_report(
+            limb, _results(knee=30.0, ankle_a1=0.0), NAMES
+        )
+        out = capsys.readouterr().out
+        assert "ankle_a1" in out
+        assert "sweep ankle_a1" in out          # 그것만 다시 재는 명령
+        assert code == 1
+
+    def test_the_report_is_clean_when_every_joint_moved(self, limb):
+        code = commission._sweep_report(
+            limb, _results(knee=30.0, ankle_a1=25.0), NAMES
+        )
+        assert code == 0
+
+
+class TestEnterKey:
+    """Enter 를 길게 누르면 줄바꿈이 여러 개 들어옴. 남기면 다음 단계가 건너뛰어짐."""
+
+    @pytest.fixture
+    def keyboard(self, monkeypatch):
+        read_fd, write_fd = os.pipe()
+        monkeypatch.setattr(
+            sys, "stdin",
+            types.SimpleNamespace(isatty=lambda: True, fileno=lambda: read_fd),
+        )
+        yield lambda data: os.write(write_fd, data)
+        os.close(read_fd)
+        os.close(write_fd)
+
+    def test_one_press_is_seen(self, keyboard):
+        keyboard(b"\n")
+        assert commission._enter_pressed() is True
+
+    def test_nothing_typed_does_not_wait(self, keyboard):
+        assert commission._enter_pressed() is False
+
+    def test_a_long_press_counts_once(self, keyboard):
+        """세 줄이 한꺼번에 들어와도 다음 단계로 넘어가지 않아야 함."""
+        keyboard(b"\n\n\n")
+        assert commission._enter_pressed() is True
+        assert commission._enter_pressed() is False
+
+
+class TestSweepRate:
+    """측정 주기는 묻지 않고 기본값으로 감. 사람이 정할 일이 아님."""
+
+    def test_it_is_not_asked(self):
+        assert "sweep" not in commission.OPTIONS
+
+    def test_the_default_is_filled_in(self):
+        args = commission.build_parser().parse_args(["sweep"])
+        assert args.hz == commission.DEFAULT_SWEEP_HZ
+
+    def test_it_can_still_be_given(self):
+        args = commission.build_parser().parse_args(["sweep", "--hz", "50"])
+        assert args.hz == 50.0
+
+
+class TestSweepNeedsSomewhereToSave:
+    def test_refused_before_measuring(self, run, monkeypatch):
+        """다 재고 나서 저장할 데가 없다고 하면 그 시간이 헛수고가 됨."""
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+        with pytest.raises(SystemExit, match="저장할 데가 없음"):
+            run("--limb", "left_leg", "sweep", "knee")

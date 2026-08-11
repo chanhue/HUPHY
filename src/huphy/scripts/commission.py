@@ -7,12 +7,16 @@
 설정 파일에서 모터 목록을 읽으므로 모터 id 를 손으로 적지 않음.
 
 
-## 관절 이름으로 말함
+## 관절 이름으로 말하되, CAN id 로도 부를 수 있음
 
-    nudge knee          O
-    nudge 10            X
+    nudge knee          관절 이름
+    nudge 10            CAN id. 같은 관절을 가리킴
 
-사람은 관절로 생각하고, 모터 id 는 배선이 바뀌면 달라짐. 설정에 적힌 이름을 그대로 씀.
+사람은 관절로 생각하므로 이름이 기본임. 그런데 **배선을 확인하는 중에는 어느 id 가
+어느 관절인지 아직 모름** (이슈 #8). `scan` 과 `state` 가 id 를 같이 내므로, 그
+시점에는 id 로 부르는 것이 사람이 실제로 하는 말임.
+
+무엇으로 골랐든 화면에는 관절 이름으로 나옴.
 
 
 ## 어느 팔다리인지 반드시 지정함
@@ -34,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import select
 import sys
 from dataclasses import dataclass
@@ -66,6 +71,13 @@ DANGEROUS = {
 
 YES_HELP = "되돌리기 어려운 조작임을 확인함"
 
+DEFAULT_SWEEP_HZ = 20.0
+"""`sweep` 이 초당 몇 번 재는지.
+
+물어보지 않고 이 값으로 시작함 -- 사람이 손으로 미는 속도에 견주면 충분히 촘촘하고,
+바꿀 이유가 거의 없음. 필요하면 `--hz` 로 줄 수 있음.
+"""
+
 
 def _find_config() -> Optional[Path]:
     """현재 폴더부터 위로 올라가며 `config/robot.yaml` 을 찾음.
@@ -95,12 +107,32 @@ def _pick_limb(robot: RobotConfig, name: Optional[str]) -> LimbConfig:
     )
 
 
-def _joint_id(limb: LimbConfig, joint: str) -> int:
-    if joint not in limb.motors:
+def _by_id(limb: LimbConfig) -> Dict[int, str]:
+    return {motor.id: name for name, motor in limb.motors.items()}
+
+
+def _resolve_joint(limb: LimbConfig, token: str) -> Optional[str]:
+    """관절 이름이나 CAN id 를 관절 이름으로 바꿈. 어느 쪽도 아니면 `None`.
+
+    **id 로도 부를 수 있게 함.** `scan` 과 `state` 가 id 를 같이 내고, 배선을
+    확인하는 중에는 어느 id 가 어느 관절인지 아직 모름 (이슈 #8). 그 시점에는
+    "10번을 움직여 봐" 가 사람이 실제로 하는 말임.
+    """
+    if token in limb.motors:
+        return token
+    if token.isdigit():
+        return _by_id(limb).get(int(token))
+    return None
+
+
+def _joint_or_exit(limb: LimbConfig, token: str) -> str:
+    joint = _resolve_joint(limb, token)
+    if joint is None:
         raise SystemExit(
-            f"{limb.name} 에 {joint!r} 관절이 없음 (가용: {sorted(limb.motors)})"
+            f"{limb.name} 에 {token!r} 관절이 없음 "
+            f"(이름: {sorted(limb.motors)}, id: {sorted(_by_id(limb))})"
         )
-    return limb.motors[joint].id
+    return joint
 
 
 def choose_joints(
@@ -112,14 +144,14 @@ def choose_joints(
 ) -> List[str]:
     """무엇을 대상으로 할지 정함. 인자가 없으면 **물어봄.**
 
-    관절 이름을 외우지 않아도 되게 하려는 것임. 목록을 보여주고 번호나 이름을 받음.
+    관절 이름을 외우지 않아도 되게 하려는 것임. 목록을 보여주고 번호·이름·CAN id
+    중 아무거나 받음.
 
     화면이 아니면(파이프, 스크립트) 묻지 않음 -- 입력이 없는 곳에서 멈추면 안 됨.
     그때는 `allow_all` 이면 전부, 아니면 에러임.
     """
     if joint:
-        _joint_id(limb, joint)
-        return [joint]
+        return [_joint_or_exit(limb, joint)]
 
     names = list(limb.motors)
 
@@ -143,12 +175,17 @@ def choose_joints(
 
     if allow_all and raw in ("a", "all", "전부"):
         return names
+    # 목록 번호를 id 보다 먼저 봄. 화면에 번호가 떠 있으므로 사람이 그것을 친 것임.
     if raw.isdigit() and 1 <= int(raw) <= len(names):
         return [names[int(raw) - 1]]
-    if raw in names:
-        return [raw]
 
-    raise SystemExit(f"{raw!r} 는 고를 수 없음 (가용: {names})")
+    joint = _resolve_joint(limb, raw)
+    if joint is None:
+        raise SystemExit(
+            f"{raw!r} 는 고를 수 없음 (번호 1~{len(names)}, 이름 {names}, "
+            f"id {sorted(_by_id(limb))})"
+        )
+    return [joint]
 
 
 # ===========================================================================
@@ -178,7 +215,6 @@ OPTIONS: Dict[str, Tuple[Option, ...]] = {
         Option("kp", 5.0, float, "위치 게인. 안 움직이면 조금씩 올릴 것"),
         Option("kd", 0.5, float, "속도 게인"),
     ),
-    "sweep": (Option("hz", 20.0, float, "몇 번 재는지. 초당"),),
     "zero": (Option("note", None, str, "어느 자세에서 잡는지. 나중에 재현하려면 필요함"),),
     "mode": (
         Option(
@@ -313,11 +349,7 @@ def cmd_scan(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
     missing = [j for j, m in limb.motors.items() if m.id not in found]
     if missing:
-        print(
-            f"\n응답 없음: {missing}\n"
-            f"  배선, 전원, CAN id, 프로토콜 모드가 후보임.\n"
-            f"  이 넷은 여기서 구분되지 않음 -- 전부 조용히 빠짐 (이슈 #11)."
-        )
+        print(f"\n응답 없음: {missing}")
         return 1
     print("\n전부 응답함.")
     return 0
@@ -379,6 +411,22 @@ def cmd_clear_fault(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     return 0
 
 
+def _pending_input() -> bytes:
+    """지금 들어와 있는 입력을 **전부** 읽어 냄. 없으면 빈 바이트열.
+
+    `input()` 이나 `readline()` 을 쓰지 않는 이유: 그쪽은 한 줄만 읽고 나머지를
+    남김. Enter 를 살짝 길게 누르면 줄바꿈이 여러 개 들어오는데, 남은 것이 다음
+    단계의 Enter 로 쓰여 그 단계가 통째로 건너뛰어짐.
+    """
+    out = b""
+    while select.select([sys.stdin], [], [], 0)[0]:
+        chunk = os.read(sys.stdin.fileno(), 1024)
+        if not chunk:
+            break
+        out += chunk
+    return out
+
+
 def _enter_pressed() -> bool:
     """Enter 가 눌렸는지. **기다리지 않음.**
 
@@ -386,11 +434,21 @@ def _enter_pressed() -> bool:
     """
     if not sys.stdin.isatty():
         return False
-    ready, _, _ = select.select([sys.stdin], [], [], 0)
-    if not ready:
-        return False
-    sys.stdin.readline()
-    return True
+    return b"\n" in _pending_input()
+
+
+def _wait_enter(prompt: str) -> None:
+    """Enter 를 기다림. **앞서 들어와 있던 입력은 버리고 시작함.**
+
+    직전 단계에서 연타로 들어온 줄바꿈이 이 Enter 로 쓰이면, 사람이 자세를 잡기도
+    전에 다음 단계가 시작됨.
+    """
+    _pending_input()
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    while not _enter_pressed():
+        select.select([sys.stdin], [], [], 0.05)
+    print()
 
 
 LINKED = (("ankle_a1", "ankle_a2"),)
@@ -425,6 +483,9 @@ def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
 
     0도를 **먼저** 받는 이유: 그래야 재는 값이 곧 관절 좌표계 각도이고, 화면에
     나온 최대·최소를 `robot.yaml` 에 그대로 옮길 수 있음.
+
+    **단계가 끝날 때마다 저장함.** 관절 여섯 개를 재는 데 몇 분이 걸리고 그동안
+    사람이 계속 자세를 잡고 있음. 도중에 끊기면 그 단계만 빠지고 앞서 잰 것은 남음.
     """
     asked = args.joint is None
     joints = choose_joints(limb, args.joint, allow_all=True, what="잴까요")
@@ -435,21 +496,34 @@ def cmd_sweep(args, limb: LimbConfig, bus: RobStrideBus) -> int:
     if not sys.stdin.isatty():
         raise SystemExit("sweep 은 화면에서 실행할 것 -- 관절마다 Enter 를 받음")
 
+    # 재기 전에 막음. 다 재고 나서 저장할 데가 없다고 하면 그 시간이 헛수고가 됨.
+    if not limb.calibration_path:
+        raise SystemExit(
+            f"{limb.name} 에 캘리브레이션 파일이 설정되어 있지 않아 저장할 데가 없음.\n"
+            f"robot.yaml 의 이 팔다리에 calibration 항목을 적을 것"
+        )
+
     names = {motor.id: name for name, motor in limb.motors.items()}
     steps = _steps(joints)
 
     print(
-        f"\n{limb.name} 가동 범위 측정 -- {len(steps)}단계\n\n"
+        f"\n{limb.name} 가동 범위 측정 -- {len(steps)}단계, 초당 {args.hz:.0f}번 잽니다.\n\n"
         f"  관절마다 두 번 물어봅니다.\n"
         f"    1) 0도 자세로 두고 Enter    -- 여기를 관절 0도로 부름\n"
         f"    2) 양쪽 끝까지 밀고 Enter   -- 그 기준으로 최대·최소를 기록\n\n"
         f"  토크는 꺼져 있습니다. 하드스톱에 닿는 느낌을 확인하며 천천히 밀 것 --\n"
-        f"  끝까지 안 밀면 그만큼 좁게 나옵니다."
+        f"  끝까지 안 밀면 그만큼 좁게 나옵니다.\n"
+        f"  한 단계가 끝날 때마다 저장하므로 도중에 그만둬도 앞의 것은 남습니다."
     )
 
     results = {}
     for index, group in enumerate(steps, start=1):
-        results.update(_sweep_step(bus, limb, group, index, len(steps), names, args.hz))
+        # 한 단계를 끝내야 저장함. 중단되면 그 단계는 안 들어가고 여기서 빠져나감.
+        step = _sweep_step(bus, limb, group, index, len(steps), names, args.hz)
+        results.update(step)
+        saved = _save_sweep(limb, step, names)
+        if saved:
+            print(f"\n       저장함: {', '.join(saved)} -> {limb.calibration_path}")
 
     return _sweep_report(limb, results, names)
 
@@ -463,7 +537,7 @@ def _sweep_step(bus, limb, group, index, total, names, hz) -> dict:
     if len(group) > 1:
         print(f"       발을 잡고 움직이면 두 모터가 같이 따라옵니다.")
 
-    input(f"       0도 자세로 두고 Enter: ")
+    _wait_enter(f"       0도 자세로 두고 Enter: ")
     offsets = C.measure_offset(bus, ids)
     for mid in ids:
         print(f"       {names[mid]:<10} offset {offsets[mid]:+8.2f}")
@@ -501,23 +575,27 @@ def _sweep_step(bus, limb, group, index, total, names, hz) -> dict:
     )
 
 
-def _sweep_report(limb: LimbConfig, results: dict, names: dict) -> int:
-    """잰 값을 캘리브레이션 파일에 씀.
+def _save_sweep(limb: LimbConfig, results: dict, names: dict) -> List[str]:
+    """잰 값을 캘리브레이션 파일에 씀. 저장한 관절 이름을 돌려줌.
+
+    **한 단계가 끝날 때마다 부름.** 마지막에 몰아 쓰면 도중에 끊겼을 때 그때까지 잰
+    것이 전부 사라짐 -- 관절마다 손으로 자세를 잡는 작업이라 다시 하는 비용이 큼.
 
     오프셋과 한계각이 같은 자리에 들어감 -- 둘 다 이 조작에서 나온 값이고, 기계
     영점을 다시 잡으면 둘 다 무효가 됨. `sign` 과 `zero_reference` 는 건드리지
     않음. 다른 곳에서 정해지는 값임.
+
+    **폭이 0인 관절은 뺌.** 한계각은 최소가 최대보다 작아야 해서 저장할 수 없고,
+    폭이 0이라는 것은 그 관절을 실제로 움직이지 않았다는 뜻임. 뺀 관절은 파일에
+    손대지 않으므로 전에 잰 값이 있으면 그대로 남음.
     """
-    if not limb.calibration_path:
-        print(
-            "\n  캘리브레이션 파일이 설정되어 있지 않아 저장하지 못함.\n"
-            "  robot.yaml 의 이 팔다리에 calibration 항목을 적을 것."
-        )
-        return 1
+    measured = {mid: r for mid, r in results.items() if r.span_deg > 0.0}
+    if not measured:
+        return []
 
     path = limb.calibration_path
     entries = cal.load(path) if path.is_file() else cal.identity(limb.motors)
-    for mid, r in results.items():
+    for mid, r in measured.items():
         previous = entries.get(names[mid], MotorCalibration(motor_id=-1))
         entries[names[mid]] = MotorCalibration(
             motor_id=-1,
@@ -527,15 +605,32 @@ def _sweep_report(limb: LimbConfig, results: dict, names: dict) -> int:
             limits_deg=(r.lo_deg, r.hi_deg),
         )
     cal.save(path, entries, limb=limb.name)
+    return [names[mid] for mid in measured]
 
-    print(f"\n  {path} 에 적었음:\n")
+
+def _sweep_report(limb: LimbConfig, results: dict, names: dict) -> int:
+    """잰 값을 표로 냄. **저장은 단계마다 이미 끝났음** (`_save_sweep`).
+
+    폭이 0인 관절은 저장되지 않았으므로 여기서 따로 알려줌. 다시 재야 하는 관절임.
+    """
+    measured = {mid: r for mid, r in results.items() if r.span_deg > 0.0}
+    unmoved = [names[mid] for mid, r in results.items() if r.span_deg <= 0.0]
+
+    if not measured:
+        print(
+            f"\n  움직인 관절이 없어 저장한 것이 없음: {unmoved}\n"
+            f"  토크가 꺼진 상태에서 관절을 양쪽 끝까지 밀 것."
+        )
+        return 1
+
+    print(f"\n  {limb.calibration_path} 에 적었음:\n")
     print(
         "      "
         + table.header(
             ("관절", 10, "<"), ("최소", 9), ("최대", 9), ("범위", 9), ("오프셋", 9)
         )
     )
-    for mid, r in results.items():
+    for mid, r in measured.items():
         print(
             f"      {names[mid]:<10} {r.lo_deg:9.2f} {r.hi_deg:9.2f} "
             f"{r.span_deg:9.2f} {r.offset_deg:9.2f}"
@@ -546,11 +641,17 @@ def _sweep_report(limb: LimbConfig, results: dict, names: dict) -> int:
         f"  기계 영점을 다시 잡으면 오프셋과 한계각을 둘 다 다시 재야 함."
     )
 
-    thin = [names[mid] for mid, r in results.items() if r.span_deg < 5.0]
+    if unmoved:
+        print(
+            f"\n  움직이지 않아 저장하지 않은 관절: {unmoved}\n"
+            f"  그 관절만 다시 잴 것: "
+            f"huphy-commission --limb {limb.name} sweep {unmoved[0]}"
+        )
+
+    thin = [names[mid] for mid, r in measured.items() if r.span_deg < 5.0]
     if thin:
         print(f"\n  범위가 5도도 안 되는 관절: {thin}. 끝까지 밀었는지 확인할 것.")
-        return 1
-    return 0
+    return 1 if thin or unmoved else 0
 
 
 def cmd_nudge(args, limb: LimbConfig, bus: RobStrideBus) -> int:
@@ -717,34 +818,37 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("fault", help="고장 상태 조회")
 
     c = sub.add_parser("clear-fault", help="고장 상태 지우기")
-    c.add_argument("joint", nargs="?", help="생략하면 물어봄 (기본 전부)")
+    c.add_argument("joint", nargs="?", help="관절 이름이나 CAN id. 생략하면 물어봄 (기본 전부)")
 
     s = sub.add_parser("sweep", help="토크를 끄고 손으로 밀어 가동 범위 측정")
-    s.add_argument("joint", nargs="?", help="생략하면 물어봄 (기본 전부)")
-    s.add_argument("--hz", type=float, help="기본 20")
+    s.add_argument("joint", nargs="?", help="관절 이름이나 CAN id. 생략하면 물어봄 (기본 전부)")
+    s.add_argument(
+        "--hz", type=float, default=DEFAULT_SWEEP_HZ,
+        help=f"초당 몇 번 재는지. 기본 {DEFAULT_SWEEP_HZ:.0f}",
+    )
 
     n = sub.add_parser("nudge", help="조금 움직였다 되돌림. 어느 관절인지 확인용")
-    n.add_argument("joint", nargs="?", help="생략하면 물어봄")
+    n.add_argument("joint", nargs="?", help="관절 이름이나 CAN id. 생략하면 물어봄")
     n.add_argument("--delta", type=float, help="기본 5도, 최대 20도")
     n.add_argument("--kp", type=float, help="기본 5.0")
     n.add_argument("--kd", type=float, help="기본 0.5")
 
     z = sub.add_parser("zero", help="[영구] 지금 자세를 기계 영점으로")
-    z.add_argument("joint", nargs="?", help="생략하면 물어봄 (기본 전부)")
+    z.add_argument("joint", nargs="?", help="관절 이름이나 CAN id. 생략하면 물어봄 (기본 전부)")
     z.add_argument("--note", help="어느 자세에서 잡는지. 나중에 재현하려면 필요함")
     z.add_argument("--yes", action="store_true", help=YES_HELP)
 
     m = sub.add_parser("mode", help="제어 모드 변경")
-    m.add_argument("joint", nargs="?", help="생략하면 물어봄")
+    m.add_argument("joint", nargs="?", help="관절 이름이나 CAN id. 생략하면 물어봄")
     m.add_argument("--to", choices=[x.name.lower() for x in tables.ControlMode], help="기본 mit")
 
     i = sub.add_parser("can-id", help="[영구] CAN id 변경")
-    i.add_argument("joint", nargs="?", help="생략하면 물어봄")
+    i.add_argument("joint", nargs="?", help="관절 이름이나 CAN id. 생략하면 물어봄")
     i.add_argument("--to", type=int, help="바꿀 CAN id. 생략하면 물어봄")
     i.add_argument("--yes", action="store_true", help=YES_HELP)
 
     pr = sub.add_parser("protocol", help="[영구] 프로토콜 전환. 전원 재투입 필요")
-    pr.add_argument("joint", nargs="?", help="생략하면 물어봄")
+    pr.add_argument("joint", nargs="?", help="관절 이름이나 CAN id. 생략하면 물어봄")
     pr.add_argument("--to", choices=[x.name.lower() for x in tables.Protocol], help="생략하면 물어봄")
     pr.add_argument("--yes", action="store_true", help=YES_HELP)
 
@@ -799,6 +903,11 @@ def main(argv=None) -> int:
         sys.stdout.flush()      # 앞서 찍은 안내문 뒤에 나오도록
         print(f"\n실패: {e}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        # 관절마다 Enter 를 받는 명령이라 도중에 그만두는 것이 정상적인 조작임.
+        # 스택 트레이스를 낼 일이 아님. sweep 은 끝난 단계까지 이미 저장했음.
+        print("\n\n  중단됨.")
+        return 130
     finally:
         bus.disconnect()
 
