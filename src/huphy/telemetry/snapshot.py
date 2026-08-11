@@ -49,6 +49,7 @@ PlotJuggler 레이아웃도 미리 만들어 둘 수 있음.
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, Mapping, Tuple
 
 FAST_MOTOR_FIELDS = ("pos", "tgt", "err", "vel", "tau")
@@ -72,6 +73,18 @@ DIAG_MOTOR_FIELDS = ("temp", "age", "ack", "miss")
 `age` 가 가장 믿을 만함. 응답이 한 번도 없던 모터는 현재 위치를 몰라 가드가 명령을
 거부하므로, 명령도 안 나가고 응답 대상에서도 빠져 `ack` 가 -1 로 가려짐. `age` 는
 명령 여부와 무관하게 참임.
+"""
+
+IMU_FIELDS = ("roll", "pitch", "yaw", "ax", "ay", "az", "gx", "gy", "gz", "age")
+"""IMU 하나가 내는 값.
+
+    roll pitch yaw   자세 (도)
+    ax ay az         가속도 (m/s^2). 중력 포함
+    gx gy gz         각속도 (도/초)
+    age              마지막 패킷 이후 경과 (ms). 한 번도 못 받았으면 -1
+
+`age` 가 있는 이유는 모터의 `age` 와 같음 — 값이 언제 것인지 모르면 센서가 멈춘
+것을 알 수 없음. 자세는 멈춰도 그럴듯한 숫자로 남아 있음.
 """
 
 FAST_GLOBAL = ("t", "loop_dt")
@@ -112,13 +125,29 @@ def diag_field_names(robot: Any) -> Tuple[str, ...]:
     return tuple(names)
 
 
-def field_names(robot: Any) -> Tuple[str, ...]:
-    """CSV 열. 빠른 것과 진단을 합친 것임. 순서가 열 순서임.
+def imu_field_names(robot: Any) -> Tuple[str, ...]:
+    """IMU 필드. 붙은 IMU 가 없으면 `t` 만.
 
-    `t` 는 양쪽에 다 있으므로 한 번만 넣음.
+    **팔다리 이름이 앞에 붙지 않음.** IMU 개체 이름을 씀 -- 같은 센서가 다리에
+    붙었다가 몸통으로 옮겨감. 팔다리 이름을 쓰면 옮기는 순간 필드 이름이 바뀌어
+    예전 로그·그래프 레이아웃과 안 맞음.
     """
-    fast = fast_field_names(robot)
-    return fast + tuple(n for n in diag_field_names(robot) if n not in fast)
+    names = ["t"]
+    for imu_name in _imu_names(robot):
+        names.extend(f"imu/{imu_name}/{f}" for f in IMU_FIELDS)
+    return tuple(names)
+
+
+def field_names(robot: Any) -> Tuple[str, ...]:
+    """CSV 열. 빠른 것·진단·IMU 를 합친 것임. 순서가 열 순서임.
+
+    `t` 는 셋 다에 있으므로 한 번만 넣음.
+    """
+    out = list(fast_field_names(robot))
+    for name in diag_field_names(robot) + imu_field_names(robot):
+        if name not in out:
+            out.append(name)
+    return tuple(out)
 
 
 # ===========================================================================
@@ -199,16 +228,68 @@ def build_diag(robot: Any, *, t: float) -> Dict[str, float]:
     return out
 
 
+def build_imu(robot: Any, *, t: float) -> Dict[str, float]:
+    """IMU 값. 붙은 것이 없으면 `t` 만 담김.
+
+    **값이 없어도 키는 냄.** 센서가 아직 패킷을 못 받았으면 전부 0 이고 `age` 가
+    -1 임 -- 0도라는 뜻이 아니라 모른다는 뜻이고, `age` 로 구분함.
+    """
+    out: Dict[str, float] = {"t": float(t)}
+    states = _imu_states(robot)
+    now = time.monotonic()
+
+    for imu_name in _imu_names(robot):
+        state = states.get(imu_name)
+        head = f"imu/{imu_name}"
+        if state is None:
+            for field in IMU_FIELDS:
+                out[f"{head}/{field}"] = -1.0 if field == "age" else 0.0
+            continue
+
+        accel = state.accel_mps2
+        gyro = state.gyro_dps
+        out[f"{head}/roll"] = float(state.roll_deg)
+        out[f"{head}/pitch"] = float(state.pitch_deg)
+        out[f"{head}/yaw"] = float(state.yaw_deg)
+        out[f"{head}/ax"], out[f"{head}/ay"], out[f"{head}/az"] = (float(v) for v in accel)
+        out[f"{head}/gx"], out[f"{head}/gy"], out[f"{head}/gz"] = (float(v) for v in gyro)
+        out[f"{head}/age"] = float(state.age_ms(now))
+    return out
+
+
 def build(robot: Any, *, t: float, loop_dt_ms: float = 0.0) -> Dict[str, float]:
-    """CSV 한 줄. 빠른 것과 진단을 합친 것임."""
+    """CSV 한 줄. 빠른 것·진단·IMU 를 합친 것임."""
     out = build_fast(robot, t=t, loop_dt_ms=loop_dt_ms)
     out.update(build_diag(robot, t=t))
+    out.update(build_imu(robot, t=t))
     return out
 
 
 # ===========================================================================
 # 없어도 0을 냄
 # ===========================================================================
+def _imu_names(robot: Any) -> Tuple[str, ...]:
+    """붙은 IMU 이름들. 없으면 빈 것.
+
+    `Robot` 계약에 없는 선택 기능임 -- IMU 가 없는 로봇도 그대로 돎.
+    """
+    return tuple(imu.name for imu in getattr(robot, "imus", ()))
+
+
+def _imu_states(robot: Any) -> Dict[str, Any]:
+    """IMU 값을 물어봄. 없거나 실패하면 빈 사전.
+
+    **예외를 삼킴.** 센서 하나 때문에 기록이 멈추면 안 됨.
+    """
+    getter = getattr(robot, "imu_states", None)
+    if not callable(getter):
+        return {}
+    try:
+        return getter()
+    except Exception:
+        return {}
+
+
 def _link_status(robot: Any) -> Dict[str, Dict[str, float]]:
     """링크 상태를 물어봄. 없으면 빈 사전.
 

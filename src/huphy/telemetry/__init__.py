@@ -35,9 +35,11 @@ from .snapshot import (
     build,
     build_diag,
     build_fast,
+    build_imu,
     diag_field_names,
     fast_field_names,
     field_names,
+    imu_field_names,
     merge,
 )
 from .udp import UdpSink
@@ -52,9 +54,11 @@ __all__ = [
     "build",
     "build_fast",
     "build_diag",
+    "build_imu",
     "field_names",
     "fast_field_names",
     "diag_field_names",
+    "imu_field_names",
     "merge",
 ]
 
@@ -84,6 +88,10 @@ class Telemetry:
     ) -> None:
         self.robot = robot
         self.fields = field_names(robot)
+        self.has_imu = bool(getattr(robot, "imus", ()))
+        """IMU 가 붙었는지. 없으면 그 패킷은 아예 안 보냄 -- `t` 만 든 패킷을
+        100Hz 로 보내는 것은 낭비임. CSV 열도 `t` 하나뿐이라 늘지 않음.
+        """
         self.diag_every = max(1, int(diag_every))
         self.udp = UdpSink(host, port)
         self.csv = CsvSink(csv_path, self.fields, flush_every=flush_every)
@@ -148,14 +156,18 @@ class Telemetry:
 
         fast = build_fast(self.robot, t=t, loop_dt_ms=loop_dt_ms)
         diag = build_diag(self.robot, t=t)
+        imu = build_imu(self.robot, t=t)
 
         self.udp.send(fast)
         if self._cycle % self.diag_every == 0:
             self.udp.send(diag)
+        if self.has_imu:
+            self.udp.send(imu)
         self._cycle += 1
 
         row = dict(fast)
         row.update(diag)
+        row.update(imu)
         self.csv.write(row)
         return row
 

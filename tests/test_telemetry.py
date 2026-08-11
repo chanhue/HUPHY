@@ -10,10 +10,12 @@ UDP 는 진짜 소켓으로 자기 자신에게 보내 받아 봄. CSV 는 임�
 
 import json
 import socket
+import time
 
 import pytest
 
 from huphy import telemetry
+from huphy.sensors.base import ImuState
 from huphy.telemetry import snapshot
 from huphy.telemetry.csv_log import CsvSink
 from huphy.telemetry.udp import MTU_LIMIT, UdpSink
@@ -412,3 +414,113 @@ class TestTelemetry:
             tm.record()
             assert tm.as_fields()["csv.rows"] == 1
             assert "csv.rows" not in tm.fields
+
+
+# ===========================================================================
+# IMU — 붙었을 때만 나감
+# ===========================================================================
+class FakeImu:
+    def __init__(self, name="main"):
+        self.name = name
+
+    def read(self):
+        return ImuState(
+            roll_deg=1.0, pitch_deg=2.0, yaw_deg=3.0,
+            accel_mps2=(0.0, 0.0, 9.81),
+            gyro_dps=(4.0, 5.0, 6.0),
+            temp_c=31.5,
+            stamp=time.monotonic(),
+            is_valid=True,
+        )
+
+
+class ImuRobot(FakeRobot):
+    def __init__(self, imus=("main",), **kwargs):
+        super().__init__(**kwargs)
+        self.imus = tuple(FakeImu(n) for n in imus)
+
+    def imu_states(self):
+        return {imu.name: imu.read() for imu in self.imus}
+
+
+class TestImuFields:
+    def test_no_imu_adds_no_columns(self, robot):
+        """IMU 가 없는 로봇은 전과 같은 열을 가짐."""
+        assert not any(n.startswith("imu/") for n in snapshot.field_names(robot))
+
+    def test_the_imu_name_is_prefixed_not_the_limb(self):
+        """다리에서 몸통으로 옮겨도 필드 이름이 그대로여야 함."""
+        names = snapshot.field_names(ImuRobot())
+        assert "imu/main/roll" in names
+        assert "right_leg/imu/roll" not in names
+
+    def test_build_matches_the_field_names(self):
+        imu_robot = ImuRobot()
+        assert set(snapshot.build(imu_robot, t=0.0)) == set(
+            snapshot.field_names(imu_robot)
+        )
+
+    def test_values_come_through(self):
+        row = snapshot.build_imu(ImuRobot(), t=0.0)
+        assert row["imu/main/roll"] == 1.0
+        assert row["imu/main/az"] == 9.81
+        assert row["imu/main/gz"] == 6.0
+
+    def test_several_imus_each_get_a_group(self):
+        names = snapshot.field_names(ImuRobot(imus=("main", "foot")))
+        assert "imu/main/roll" in names
+        assert "imu/foot/roll" in names
+
+    def test_a_silent_imu_still_emits_keys(self):
+        """키가 사라지면 그래프가 끊기고 CSV 열이 밀림."""
+        class Silent(ImuRobot):
+            def imu_states(self):
+                return {}
+
+        row = snapshot.build_imu(Silent(), t=0.0)
+        assert row["imu/main/roll"] == 0.0
+        assert row["imu/main/age"] == -1.0
+
+    def test_a_broken_imu_does_not_stop_recording(self):
+        class Broken(ImuRobot):
+            def imu_states(self):
+                raise RuntimeError("포트가 빠짐")
+
+        row = snapshot.build_imu(Broken(), t=0.0)
+        assert row["imu/main/age"] == -1.0
+
+
+class TestImuPacket:
+    def test_it_goes_out_separately(self, receiver):
+        """다리 하나가 이미 MTU 에 가까움. 합치면 조각남."""
+        port = receiver.getsockname()[1]
+        t = telemetry.Telemetry(ImuRobot(), host="127.0.0.1", port=port)
+        t.open()
+        t.record()
+        t.close()
+
+        packets = []
+        for _ in range(3):
+            try:
+                packets.append(json.loads(receiver.recv(65535)))
+            except socket.timeout:
+                break
+
+        imu_packets = [p for p in packets if any(k.startswith("imu/") for k in p)]
+        assert len(imu_packets) == 1
+        assert not any("knee" in k for k in imu_packets[0])
+
+    def test_no_imu_means_no_extra_packet(self, robot, receiver):
+        port = receiver.getsockname()[1]
+        t = telemetry.Telemetry(robot, host="127.0.0.1", port=port)
+        t.open()
+        t.record()
+        t.close()
+
+        packets = []
+        for _ in range(3):
+            try:
+                packets.append(json.loads(receiver.recv(65535)))
+            except socket.timeout:
+                break
+        assert not any(any(k.startswith("imu/") for k in p) for p in packets)

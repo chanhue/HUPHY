@@ -85,6 +85,22 @@ right_leg/can/rx_errors      수신 실패
 right_leg/can/drain_timeouts 기대한 응답을 못 채운 횟수
 ```
 
+**IMU — 매 주기** (IMU 하나에 10필드. 붙었을 때만)
+
+```
+t
+imu/main/roll                자세 (도)
+imu/main/pitch
+imu/main/yaw
+imu/main/ax                  가속도 (m/s^2). 중력 포함
+imu/main/ay
+imu/main/az
+imu/main/gx                  각속도 (도/초)
+imu/main/gy
+imu/main/gz
+imu/main/age                 마지막 패킷 이후 경과 (ms). 한 번도 없었으면 -1
+```
+
 **나누는 이유는 패킷 크기임.** 합치면 66필드에 약 1.8 KB 로 MTU 를 넘어 조각남.
 
 나누는 것이 자연스럽기도 함 — `temp` 는 초 단위로 변하고 카운터는 사건이 있을 때만
@@ -149,6 +165,10 @@ can/tx_errors  0.0                    <- 배선이 아니라 모터가 무시하
 
 **팔다리 이름이 앞에 붙음.** 양다리를 같이 기록할 때 `knee` 가 둘이 되기 때문임.
 
+**IMU 만 예외로 개체 이름을 씀** (`imu/main/roll`). 같은 센서가 다리에 붙었다가
+몸통으로 옮겨감 — 팔다리 이름을 쓰면 옮기는 순간 필드 이름이 바뀌어 예전 로그와
+그래프 레이아웃이 안 맞음.
+
 ### `tgt` 는 실제로 나간 명령임
 
 명령한 값이 아니라 **잘리고 남은 값**임 (`robot.last_sent`).
@@ -164,8 +184,8 @@ can/tx_errors  0.0                    <- 배선이 아니라 모터가 무시하
 ## 팔다리마다 따로 둠
 
 ```python
-Telemetry(left_leg,  host=...)    # 빠른 패킷 + 진단 패킷
-Telemetry(right_leg, host=...)    # 빠른 패킷 + 진단 패킷
+Telemetry(left_leg,  host=...)    # 빠른 패킷 + 진단 패킷 (+ IMU 패킷)
+Telemetry(right_leg, host=...)    # 빠른 패킷 + 진단 패킷 (+ IMU 패킷)
 ```
 
 **합쳐 보내지 않음.** 다리 하나의 빠른 패킷이 이미 850 B 라, 둘을 합치면 MTU 를
