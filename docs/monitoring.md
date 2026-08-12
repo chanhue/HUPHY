@@ -324,7 +324,7 @@ python -m huphy.scripts.bringup --limb right_leg
 
 | | 왜 |
 |---|---|
-| 발목 `pitch`/`roll` 실측 | FK 가 뉴턴 반복이라 비쌈. 낮은 주기로 넣을 수 있음 |
+| 발목 `pitch`/`roll` 실측 | 모터가 보고하는 값이 아니라 FK 로 푸는 값임. 넣으려면 스냅샷에서 `ankle_pose()` 를 부르면 됨 |
 | 한계까지 남은 여유 | `safety.limits.margin_to_limit()` 은 있음 |
 | 게인 값 | 설정에 고정이라 실행 중 안 바뀜 |
 | 진단 패킷 주기 설정 | 지금은 코드 기본값(10주기) |

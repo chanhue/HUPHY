@@ -48,6 +48,8 @@ import time
 from dataclasses import replace
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
+import numpy as np
+
 from .. import calibration as calib
 from ..config.schema import LimbConfig, SafetyConfig
 from ..kinematics.ankle import AnkleKinematics, AnkleUnreachableError
@@ -65,6 +67,20 @@ ANKLE_MOTORS = ("ankle_a1", "ankle_a2")
 JOINT_NAMES = SINGLE_JOINTS + ANKLE_JOINTS
 REQUIRED_MOTORS = SINGLE_JOINTS + ANKLE_MOTORS
 """설정에 반드시 있어야 하는 모터 이름. 발목만 관절 이름과 다름."""
+
+ANKLE_POSITION = "position"
+ANKLE_TORQUE = "torque"
+"""발목 두 모터에 무엇을 실어 보낼지.
+
+MIT 프레임은 하나고 칸이 다섯임 (q, dq, kp, kd, tau_ff). 두 가지 명령이 있는 것이
+아니라 **같은 프레임을 다르게 채우는 것**임.
+
+    position   q=목표각  kp=게인  kd=게인  tau_ff=0    모터 펌웨어가 PD 를 함
+    torque     q=0       kp=0     kd=0     tau_ff=tau  모터는 시킨 토크만 냄
+
+모터 각도에 게인을 걸면 로드 지렛대 비가 자세마다 달라 발목이 내는 강성이 자세마다
+달라짐. 관절 토크를 만들어 야코비안으로 내리면 그 비가 보정됨.
+"""
 
 
 class Leg(Robot):
@@ -86,12 +102,35 @@ class Leg(Robot):
         kinematics: Optional[AnkleKinematics] = None,
         allow_uncalibrated: bool = False,
         imus: Optional[Sequence[Any]] = None,
+        ankle_output: str = ANKLE_POSITION,
+        ankle_kp: Tuple[float, float] = (0.0, 0.0),
+        ankle_kd: Tuple[float, float] = (0.0, 0.0),
     ) -> None:
         self.config = config
         self.id = config.name
         self.bus = bus
         self.safety = safety if safety is not None else SafetyConfig()
         self.allow_uncalibrated = allow_uncalibrated
+
+        if ankle_output not in (ANKLE_POSITION, ANKLE_TORQUE):
+            raise ValueError(
+                f"{config.name}: ankle_output 은 {ANKLE_POSITION!r} 또는 "
+                f"{ANKLE_TORQUE!r} 여야 함 (받은 값 {ankle_output!r})"
+            )
+        self.ankle_output = ankle_output
+        """발목 두 모터에 무엇을 실어 보낼지. 나머지 4관절은 늘 위치임.
+
+        한 실행 안에서 바뀌지 않음 -- 브링업은 위치로, 정책 실행은 토크로 만듦.
+        섞어 쓸 일이 생기면 그때 주기마다 바꾸는 길을 내면 됨.
+        """
+
+        self.ankle_kp = (float(ankle_kp[0]), float(ankle_kp[1]))
+        self.ankle_kd = (float(ankle_kd[0]), float(ankle_kd[1]))
+        """발목 관절 PD 게인. `(pitch, roll)` 순서, Nm/rad 와 Nm/(rad/s).
+
+        `ankle_output` 이 토크일 때만 씀. 모터 각도에 거는 `Motor.gains` 와 다른
+        값임 -- 이쪽은 **관절 각도**에 거는 것이고, 로드 지렛대 비는 야코비안이 봄.
+        """
 
         self.imus: Tuple[Any, ...] = tuple(imus or ())
         """이 다리에 붙은 IMU 들. **없어도 다리는 그대로 돎.**
@@ -119,6 +158,8 @@ class Leg(Robot):
 
         self._last_sent: Dict[str, float] = {}
         self._ankle_guess: Tuple[float, float] = (0.0, 0.0)
+        self._ankle_pose: Optional[Tuple[float, float]] = None
+        """이번 주기의 발목각. 못 풀었으면 `None`. `_update_ankle_pose` 가 채움."""
         self.counters = guards.GuardCounters()
 
         # 링크 상태. 명령이 씹혔는지 판단하는 근거임 -- MIT 모드는 명령을 받으면
@@ -168,10 +209,10 @@ class Leg(Robot):
 
     @property
     def observation_features(self) -> Dict[str, type]:
-        """관찰 필드. **모터 단위**로 냄 — 실제로 측정되는 것이 그것이기 때문임.
+        """관찰 필드. 모터 단위 값과 발목각.
 
-        발목 pitch/roll 은 FK 를 거쳐야 나오는데 뉴턴 반복이라 비쌈. 필요할 때만
-        `ankle_pose()` 로 따로 구함.
+        모터 단위가 기본임 — 실제로 측정되는 것이 그것임. 발목 `pitch`/`roll` 만
+        FK 로 푼 값이고, 모델이 관절각을 입력으로 받으므로 여기 같이 냄.
         """
         out: Dict[str, type] = {}
         for motor in self.motor_names:
@@ -179,6 +220,8 @@ class Leg(Robot):
             out[f"{motor}.vel"] = float
             out[f"{motor}.torque"] = float
             out[f"{motor}.temp"] = float
+        out["ankle_pitch.pos"] = float
+        out["ankle_roll.pos"] = float
         out["stale_motors"] = int
         return out
 
@@ -291,17 +334,33 @@ class Leg(Robot):
             out[f"{motor_name}.vel"] = state.velocity_deg_s
             out[f"{motor_name}.torque"] = state.torque_nm
             out[f"{motor_name}.temp"] = state.temp_c
+
+        # 발목각. 모터가 보고하는 값이 아니라 FK 로 푼 값임. 못 풀었으면 마지막으로
+        # 알려진 자세를 냄 -- 모터각이 응답 없을 때 직전 상태를 그대로 두는 것과 같음.
+        pitch, roll = self._ankle_pose if self._ankle_pose is not None else self._ankle_guess
+        out["ankle_pitch.pos"] = pitch
+        out["ankle_roll.pos"] = roll
+
         out["stale_motors"] = stale
         return out
 
     def ankle_pose(self) -> Optional[Tuple[float, float]]:
-        """지금 발목 (pitch, roll). 구할 수 없으면 `None`.
+        """지금 발목 (pitch, roll). 아직 못 풀었으면 `None`.
 
-        **FK 는 뉴턴 반복이라 비쌈.** 제어 루프에서 매 주기 부르지 말 것 — 관찰
-        필드에 넣지 않은 이유임.
+        **여기서 계산하지 않음.** 상태가 갱신되는 자리(`collect`, `refresh`)에서
+        주기당 한 번 풀어 둔 것을 꺼냄 -- `get_observation()` 이 한 주기에 여러 번
+        불려서, 부를 때마다 풀면 같은 계산을 세 번 하게 됨.
+        """
+        return self._ankle_pose
+
+    def _update_ankle_pose(self) -> None:
+        """모터각에서 발목각을 풂. **주기당 한 번.**
 
         직전 결과를 추정으로 씀. 같은 모터각 조합이 서로 다른 자세 둘에 대응하므로
         추정이 가까워야 함.
+
+        못 풀면 `None` 로 둠. 추정(`_ankle_guess`)은 그대로 두어 다음 주기가 마지막
+        성공 지점에서 다시 시작하게 함.
         """
         a1 = self.raw_to_cal("ankle_a1", self.bus.state(self._motor_id("ankle_a1")).position_deg)
         a2 = self.raw_to_cal("ankle_a2", self.bus.state(self._motor_id("ankle_a2")).position_deg)
@@ -313,9 +372,10 @@ class Leg(Robot):
             )
         except AnkleUnreachableError as e:
             logger.debug("%s 발목 FK 실패: %s", self.id, e)
-            return None
+            self._ankle_pose = None
+            return
         self._ankle_guess = pose
-        return pose
+        self._ankle_pose = pose
 
     # ---- 명령 -------------------------------------------------------------
     def _motor_targets(self, action: Action) -> Dict[str, float]:
@@ -340,6 +400,9 @@ class Leg(Robot):
                     f"(받은 것: {sorted(set(action) & set(ANKLE_JOINTS))}). "
                     f"모터 두 개가 두 자유도를 같이 만들기 때문임"
                 )
+            if self.ankle_output is ANKLE_TORQUE or self.ankle_output == ANKLE_TORQUE:
+                # 토크로 보낼 때는 모터 각도가 필요 없음. `_ankle_torque` 가 처리함.
+                return targets
             try:
                 a1, a2 = self.kinematics.solve_ik(
                     action["ankle_pitch"], action["ankle_roll"]
@@ -396,8 +459,87 @@ class Leg(Robot):
                 kd=motor.gains.kd,
             )
 
+        if self.ankle_output == ANKLE_TORQUE:
+            commands.update(self._ankle_torque(action, sent))
+
         self._last_sent = self._as_joint_space(sent)
         return commands
+
+    def _ankle_torque(
+        self, action: Action, sent: Dict[str, float]
+    ) -> Dict[int, MitCommand]:
+        """발목 두 모터에 실을 토크. 못 만들면 빈 사전.
+
+        `kp=kd=0` 으로 보내므로 **모터는 위치를 보지 않음.** 자세를 잡는 일이 전부
+        여기 계산에 달려 있고, 토크가 0이면 발목은 중력에 따라 떨어짐.
+
+        **한계 가드가 걸리지 않음.** `guards.apply` 는 목표 각도를 받아 자르는데
+        토크 명령에는 넘길 각도가 없음. 발목이 한계를 넘어가도 여기서 막지 못함
+        -- 토크 쪽 가드는 아직 없음.
+
+        지금 자세를 못 풀었으면 아무것도 안 보냄. 야코비안이 지금 자세에서 나오므로
+        자세를 모르면 토크를 만들 수 없음.
+        """
+        if not all(j in action for j in ANKLE_JOINTS):
+            return {}
+
+        pose = self.ankle_pose()
+        if pose is None:
+            self.counters.rejects["ankle_nopose"] = (
+                self.counters.rejects.get("ankle_nopose", 0) + 1
+            )
+            self._last_reject_t = time.monotonic()
+            return {}
+
+        try:
+            tau1, tau2 = self.kinematics.mit_torque(
+                (action["ankle_pitch"], action["ankle_roll"]),
+                pose,
+                current_velocity=self.ankle_velocity(),
+                kp=self.ankle_kp,
+                kd=self.ankle_kd,
+            )
+        except AnkleUnreachableError as e:
+            # 통째로 버림. 한쪽만 보내면 두 로드가 다른 자세를 요구해 비틀림.
+            logger.warning("%s 발목 토크를 버림: %s", self.id, e)
+            self.counters.rejects["ankle_singular"] = (
+                self.counters.rejects.get("ankle_singular", 0) + 1
+            )
+            self._last_reject_t = time.monotonic()
+            return {}
+
+        sent["ankle_pitch"] = float(action["ankle_pitch"])
+        sent["ankle_roll"] = float(action["ankle_roll"])
+        return {
+            self._motor_id("ankle_a1"): MitCommand(
+                position_deg=0.0, kp=0.0, kd=0.0, torque_nm=tau1
+            ),
+            self._motor_id("ankle_a2"): MitCommand(
+                position_deg=0.0, kp=0.0, kd=0.0, torque_nm=tau2
+            ),
+        }
+
+    def ankle_velocity(self) -> Tuple[float, float]:
+        """지금 발목 각속도 (pitch, roll). 도/초.
+
+        모터 속도에서 풂. `da = J dpr` 이므로 `dpr = J^-1 da` 임.
+
+        자세를 모르거나 특이점이면 `(0, 0)` 을 냄. 감쇠가 0이 되는 것이라 부족하게
+        잡히지, 반대로 밀지는 않음.
+        """
+        pose = self.ankle_pose()
+        if pose is None:
+            return (0.0, 0.0)
+        try:
+            jac = self.kinematics.jacobian(pose[0], pose[1])
+            motor = np.array([
+                self.bus.state(self._motor_id("ankle_a1")).velocity_deg_s,
+                self.bus.state(self._motor_id("ankle_a2")).velocity_deg_s,
+            ])
+            joint = np.linalg.solve(jac, motor)
+        except (AnkleUnreachableError, np.linalg.LinAlgError):
+            return (0.0, 0.0)
+        return (float(joint[0]), float(joint[1]))
 
     def _as_joint_space(self, motor_cal: Mapping[str, float]) -> Dict[str, float]:
         """실제로 나간 모터 목표를 관절 이름으로 되돌림.
@@ -407,6 +549,8 @@ class Leg(Robot):
         무엇을 보냈는지가 아니라 무엇이 실행됐는지가 필요함.
         """
         out = {j: v for j, v in motor_cal.items() if j in SINGLE_JOINTS}
+        # 토크로 보냈으면 발목이 이미 관절 이름으로 들어 있음. 되짚을 모터각이 없음.
+        out.update({j: v for j, v in motor_cal.items() if j in ANKLE_JOINTS})
         if not all(m in motor_cal for m in ANKLE_MOTORS):
             return out
         try:
@@ -441,12 +585,14 @@ class Leg(Robot):
         self._awaiting = tuple(self.config.motor_ids)
         missing = self.bus.refresh_states()
         self._note_link(missing)
+        self._update_ankle_pose()
         return tuple(missing)
 
     def collect(self) -> Tuple[int, ...]:
         """응답을 수거함. **직전에 명령한 모터만** 기다림."""
         missing = self.bus.collect(expect=len(self._awaiting))
         self._note_link(missing)
+        self._update_ankle_pose()
         return tuple(m for m in missing if m in self._awaiting)
 
     def _note_link(self, missing) -> None:

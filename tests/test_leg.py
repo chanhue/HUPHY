@@ -267,14 +267,53 @@ class TestAnkle:
     def test_ankle_pose_uses_fk(self, leg):
         FakeBus.position[11] = 3.866
         FakeBus.position[12] = -15.220
-        leg.bus.refresh_states()
+        leg.refresh()
         pose = leg.ankle_pose()
         assert pose[0] == pytest.approx(10.0, abs=0.05)
         assert pose[1] == pytest.approx(5.0, abs=0.05)
 
-    def test_ankle_pose_is_not_in_the_observation(self, leg):
-        """FK 는 뉴턴 반복이라 비쌈. 제어 루프에서 매 주기 부르면 안 됨."""
-        assert "ankle_pitch" not in leg.get_observation()
+    def test_ankle_pose_is_in_the_observation(self, leg):
+        """모델이 관절각을 입력으로 받으므로 관찰에 같이 냄."""
+        FakeBus.position[11] = 3.866
+        FakeBus.position[12] = -15.220
+        leg.refresh()
+        observation = leg.get_observation()
+        assert observation["ankle_pitch.pos"] == pytest.approx(10.0, abs=0.05)
+        assert observation["ankle_roll.pos"] == pytest.approx(5.0, abs=0.05)
+
+    def test_motor_angles_stay_in_the_observation(self, leg):
+        """발목각이 늘어난 것이지 모터각이 빠진 것이 아님. 브링업이 그것을 씀."""
+        observation = leg.get_observation()
+        assert "ankle_a1.pos" in observation
+        assert "ankle_a2.pos" in observation
+
+    def test_the_pose_is_solved_once_per_cycle(self, leg, monkeypatch):
+        """`get_observation()` 이 한 주기에 여러 번 불림. 부를 때마다 풀면 안 됨."""
+        calls = []
+        original = leg.kinematics.solve_fk
+        monkeypatch.setattr(
+            leg.kinematics, "solve_fk",
+            lambda *a, **k: (calls.append(1), original(*a, **k))[1],
+        )
+        leg.refresh()
+        before = len(calls)
+        leg.get_observation()
+        leg.get_observation()
+        leg.get_observation()
+        assert len(calls) == before
+
+    def test_a_failed_fk_keeps_the_last_known_pose(self, leg):
+        """모터각이 응답 없을 때 직전 상태를 그대로 두는 것과 같음."""
+        FakeBus.position[11] = 3.866
+        FakeBus.position[12] = -15.220
+        leg.refresh()
+        good = leg.get_observation()["ankle_pitch.pos"]
+
+        FakeBus.position[11] = 170.0        # 로드 해가 없는 조합
+        FakeBus.position[12] = -170.0
+        leg.refresh()
+        assert leg.ankle_pose() is None
+        assert leg.get_observation()["ankle_pitch.pos"] == pytest.approx(good)
 
 
 # ===========================================================================
@@ -537,3 +576,113 @@ class TestLinkStatus:
         assert leg.since_reject() == -1.0
         leg.build_commands({"knee": float("nan")})
         assert 0.0 <= leg.since_reject() < 1.0
+
+
+# ===========================================================================
+# 발목 출력 모드
+# ===========================================================================
+class TestAnkleOutputMode:
+    """발목 두 모터에 무엇을 실을지. 나머지 4관절은 늘 위치임."""
+
+    def test_position_is_the_default(self, leg):
+        assert leg.ankle_output == "position"
+
+    def test_an_unknown_mode_is_refused(self, fake_can):
+        with pytest.raises(ValueError, match="ankle_output"):
+            build(ankle_output="힘")
+
+    def test_position_mode_sends_angles(self, leg):
+        commands = leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
+        for motor in ("ankle_a1", "ankle_a2"):
+            command = commands[leg.config.motors[motor].id]
+            assert command.kp > 0.0
+            assert command.torque_nm == 0.0
+
+    def test_torque_mode_sends_torque(self, fake_can):
+        torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
+        commands = torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
+        for motor in ("ankle_a1", "ankle_a2"):
+            command = commands[torque_leg.config.motors[motor].id]
+            assert command.kp == 0.0
+            assert command.kd == 0.0
+            assert command.torque_nm != 0.0
+
+    def test_torque_mode_leaves_the_other_joints_alone(self, fake_can):
+        """모터 1개 = 관절 1개인 곳은 야코비안이 필요 없음."""
+        torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
+        commands = torque_leg.build_commands({"knee": 10.0, "ankle_pitch": 0.0,
+                                              "ankle_roll": 0.0})
+        knee = commands[torque_leg.config.motors["knee"].id]
+        assert knee.kp > 0.0
+        assert knee.torque_nm == 0.0
+
+    def test_no_error_means_no_torque(self, fake_can):
+        """목표와 실측이 같으면 PD 가 0임. 중력 보상은 아직 없음."""
+        torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
+        pose = torque_leg.ankle_pose()
+        commands = torque_leg.build_commands(
+            {"ankle_pitch": pose[0], "ankle_roll": pose[1]}
+        )
+        for motor in ("ankle_a1", "ankle_a2"):
+            command = commands[torque_leg.config.motors[motor].id]
+            assert command.torque_nm == pytest.approx(0.0, abs=1e-9)
+
+    def test_bigger_error_gives_bigger_torque(self, fake_can):
+        torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
+        small = torque_leg.build_commands({"ankle_pitch": 1.0, "ankle_roll": 0.0})
+        big = torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 0.0})
+        a1 = torque_leg.config.motors["ankle_a1"].id
+        assert abs(big[a1].torque_nm) > abs(small[a1].torque_nm)
+
+    def test_torque_mode_skips_the_ik(self, fake_can, monkeypatch):
+        """모터 각도가 필요 없음. 목표를 각도로 풀 이유가 없음."""
+        torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
+
+        def boom(*a, **k):
+            raise AssertionError("토크 모드에서는 solve_ik 를 부르지 않아야 함")
+
+        monkeypatch.setattr(torque_leg.kinematics, "solve_ik", boom)
+        torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
+
+    def test_last_sent_is_still_joint_space(self, fake_can):
+        torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
+        torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
+        assert torque_leg.last_sent["ankle_pitch"] == pytest.approx(10.0)
+
+    def test_an_unknown_pose_sends_nothing(self, fake_can):
+        """야코비안이 지금 자세에서 나옴. 자세를 모르면 토크를 만들 수 없음."""
+        torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
+        FakeBus.position[11] = 170.0
+        FakeBus.position[12] = -170.0
+        torque_leg.refresh()
+        commands = torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
+        assert torque_leg.config.motors["ankle_a1"].id not in commands
+        assert torque_leg.counters.rejects["ankle_nopose"] == 1
+
+
+class TestAnkleVelocity:
+    """모터 속도 -> 관절 속도. da = J dpr 이므로 dpr = J^-1 da."""
+
+    def test_an_unknown_pose_gives_zero(self, leg):
+        """감쇠가 0이 되는 것이라 부족하게 잡히지, 반대로 밀지는 않음."""
+        FakeBus.position[11] = 170.0
+        FakeBus.position[12] = -170.0
+        leg.refresh()
+        assert leg.ankle_pose() is None
+        assert leg.ankle_velocity() == (0.0, 0.0)
+
+    def test_it_matches_the_jacobian(self, leg):
+        import numpy as np
+
+        FakeBus.position[11] = 3.866
+        FakeBus.position[12] = -15.220
+        leg.refresh()
+        pose = leg.ankle_pose()
+        jac = leg.kinematics.jacobian(pose[0], pose[1])
+        motor = np.array([
+            leg.bus.state(11).velocity_deg_s,
+            leg.bus.state(12).velocity_deg_s,
+        ])
+        assert leg.ankle_velocity() == pytest.approx(
+            tuple(np.linalg.solve(jac, motor))
+        )

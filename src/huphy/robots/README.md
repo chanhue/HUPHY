@@ -150,24 +150,58 @@ leg.build_commands({"ankle_pitch": 5.0})
 
 모터 두 개가 두 자유도를 같이 만들기 때문임. 하나만 주면 나머지가 뭔지 알 수 없음.
 
-### 관찰은 모터 단위, 명령은 관절 단위
+### 관찰은 모터 단위 + 발목각, 명령은 관절 단위
 
 ```python
 leg.action_features        {'hipz': float, ..., 'ankle_pitch': float, 'ankle_roll': float}
-leg.observation_features   {'knee.pos': float, ..., 'ankle_a1.pos': float, 'stale_motors': int}
+leg.observation_features   {'knee.pos': float, ..., 'ankle_a1.pos': float,
+                            'ankle_pitch.pos': float, 'ankle_roll.pos': float,
+                            'stale_motors': int}
 ```
 
-관찰이 모터 단위인 이유: **실제로 측정되는 것이 그것임.** 발목 pitch/roll 은 FK 를
-거쳐야 나오는데 뉴턴 반복이라 비쌈.
+모터 단위가 기본인 이유: **실제로 측정되는 것이 그것임.** 발목 `pitch`/`roll` 만
+FK 로 푼 값이고, 모델이 관절각을 입력으로 받으므로 같이 냄.
 
-필요할 때만 따로 구함.
+FK 는 `collect()` / `refresh()` 에서 **주기당 한 번** 풂. `get_observation()` 은 한
+주기에 여러 번 불려서 거기서 풀면 같은 계산을 세 번 함. 한 번에 155us 임.
 
 ```python
-leg.ankle_pose()    # (pitch, roll) 또는 None
+leg.ankle_pose()    # (pitch, roll) 또는 None. 풀어 둔 것을 꺼내기만 함
+leg.ankle_velocity()  # (dpitch, droll) 도/초. 모터 속도를 J^-1 로 풂
 ```
 
 직전 결과를 추정으로 씀 — 같은 모터각 조합이 서로 다른 자세 둘에 대응하므로
-추정이 가까워야 함.
+추정이 가까워야 함. 못 풀면 `ankle_pose()` 가 `None` 이고, 관찰에는 마지막으로 알려진
+자세가 나감.
+
+### 발목만 토크로 보낼 수 있음
+
+```python
+Leg(limb, bus, ankle_output="torque", ankle_kp=(20.0, 20.0), ankle_kd=(0.5, 0.5))
+```
+
+MIT 프레임은 하나고 칸이 다섯임 (`q`, `dq`, `kp`, `kd`, `tau_ff`). 두 가지 명령이
+있는 것이 아니라 같은 프레임을 다르게 채우는 것임.
+
+```
+position   q=목표각  kp=30  kd=1   tau_ff=0      모터 펌웨어가 PD 를 함
+torque     q=0       kp=0   kd=0   tau_ff=tau    모터는 시킨 토크만 냄
+```
+
+나머지 4관절은 모터 1개 = 관절 1개라 늘 위치임. 발목만 갈리는 이유는 모터 각도에
+게인을 걸면 로드 지렛대 비가 자세마다 달라 발목이 내는 강성이 자세마다 달라지기
+때문임. 관절 토크를 만들어 야코비안으로 내리면 그 비가 보정됨.
+
+`ankle_kp` / `ankle_kd` 는 **관절 각도**에 거는 게인임 (`(pitch, roll)`, Nm/rad).
+모터 각도에 거는 `Motor.gains` 와 다른 값임.
+
+한 실행 안에서 바뀌지 않음 — 브링업은 위치로, 정책 실행은 토크로 만듦.
+
+지금 자세를 못 풀었으면 아무것도 안 보내고 `rejects["ankle_nopose"]` 를 셈. 야코비안이
+지금 자세에서 나오므로 자세를 모르면 토크를 만들 수 없음.
+
+**한계 가드가 걸리지 않음.** `guards.apply` 는 목표 각도를 받아 자르는데 토크 명령에는
+넘길 각도가 없음. 토크 쪽 가드는 아직 없음.
 
 ### 미실측이면 토크를 거부함
 
@@ -251,6 +285,9 @@ with Leg(cfg, bus, safety=robot.safety) as leg:
 |---|---|---|
 | `arm.py` | 팔 하나 | 팔을 붙일 때 |
 | `humanoid.py` | 다리·팔을 묶은 것 | 양다리를 같이 움직일 때 |
+
+토크 명령에 걸리는 가드도 아직 없음. 지금 가드는 목표 각도를 받아 한계로 자르는데
+토크에는 넘길 각도가 없음.
 
 `humanoid.py` 도 같은 `Robot` 계약을 채우고, 안에서 `Leg` 둘을 들고 있음.
 `build_commands` / `send` / `collect` 를 나눠 둔 것이 그때 쓰임.

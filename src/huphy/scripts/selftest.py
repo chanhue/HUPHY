@@ -232,7 +232,7 @@ def _read_pose(leg: Leg, loop: ControlLoop, joints) -> Dict[str, float]:
     받는 것임.
 
     관찰은 **모터 공간**임 (`knee.pos`). 발목만 관절 각도가 관찰에 없어서 FK 를
-    따로 부름 -- 뉴턴 반복이라 비싸서 매 주기 도는 관찰에는 넣지 않음.
+    따로 부름 -- 모터가 보고하는 값이 아니라 FK 로 푸는 값임.
     """
     loop.step(None, t=0.0)
     observation = leg.get_observation()
