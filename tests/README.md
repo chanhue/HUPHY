@@ -16,6 +16,7 @@ tests/
 ├── test_sensors.py         sensors/                    21개
 ├── test_telemetry.py       telemetry/                  65개
 ├── test_control.py         control/                    45개
+├── test_policy.py          control/policy.py           30개
 ├── test_bringup.py         scripts/bringup.py          36개
 └── test_selftest.py        scripts/selftest.py         27개
 ```
@@ -29,7 +30,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-830 passed in 14.0s
+860 passed in 14.0s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -248,6 +249,19 @@ UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬
 | `TestTiming` | 10 | 주기 측정, 꾸준한 느림, 정밀 대기 |
 | `TestTelemetryHookup` | 5 | 기록 실패가 루프를 안 멈춤 |
 | `TestStep` | 2 | 한 걸음씩 |
+
+### `test_policy.py` — 30개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestObservationVector` | 7 | 24/26 길이, 순서, 도->rad |
+| `TestProjectedGravity` | 5 | 수평은 (0,0,-1), 단위벡터 |
+| `TestHopPhase` | 4 | 한 바퀴에서 안 튐 |
+| `TestJointTargets` | 5 | action_scale, 관절 순서 |
+| `TestPolicyMotion` | 5 | Motion 모양, 직전 행동 |
+| `TestSpecs` | 4 | 가중치 파일과 맞는 값 |
+
+모델 자리에 함수를 넣어 돌림 — torch 없이 실행됨.
 
 ### `test_bringup.py` — 36개
 

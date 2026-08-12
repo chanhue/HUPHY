@@ -3,7 +3,8 @@
 ```
 control/
 ├── loop.py      정해진 주기로 한 사이클씩 돌림
-└── motions.py   매 주기 무엇을 시킬지 정함
+├── motions.py   매 주기 무엇을 시킬지 정함
+└── policy.py    학습한 정책을 Motion 으로 만듦
 ```
 
 ---
@@ -15,6 +16,7 @@ control/
 ```
 loop.py      주기, 모드, 시작·종료 순서, 밀림 측정
 motions.py   (시간, 관찰) -> 관절 목표
+policy.py    (시간, 관찰) -> 관절 목표.  안에서 모델을 부름
 ```
 
 같은 루프로 유지·계단·사인파·보행 궤적을 다 돌릴 수 있고, **동작은 하드웨어 없이
@@ -338,3 +340,83 @@ precise_sleep 이 time.sleep 보다 낫거나 같음
 보다 낫거나 같은지**만 봄 — 잠이 이미 정확한 환경에서는 차이가 없음.
 
 실물의 부하는 또 다름. `loop_dt` 를 파이에서 직접 볼 것.
+
+
+---
+
+## `policy.py`
+
+학습한 정책을 `Motion` 으로 만듦. 모양이 같아서 `loop.run()` 에 그대로 들어감.
+
+```python
+motion = policy.policy_motion(model, imu, spec=policy.BALANCE)
+loop.run(motion)
+```
+
+**모델은 관절 이름을 모름.** 정해진 순서의 숫자 벡터를 받고 같은 순서로 냄. 그
+순서와 단위를 정하는 것이 이 파일의 일임.
+
+```python
+JOINT_ORDER = ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_pitch", "ankle_roll")
+#              id 7        id 8        id 9       id 10   id 11 + id 12 로 풀림
+```
+
+### 관찰
+
+시뮬(mjlab)이 이 순서로 이어 붙임. 가중치 파일의 입력 차원과 맞음.
+
+```
+base_ang_vel        3    IMU 각속도 (rad/s)
+projected_gravity   3    중력 방향을 몸체 좌표로
+joint_pos           6    관절 각도 (rad)
+joint_vel           6    (rad/s)
+actions             6    직전 주기에 낸 행동 그대로
+hop_phase           2    sin/cos.  hopping 에만
+
+balance  24        hopping  26
+```
+
+`actions` 가 **관절 목표가 아니라 모델 출력 그대로**임. `action_scale` 을 곱하기
+전의 값이라 정책이 자기가 낸 것을 그대로 다시 봄.
+
+`hop_phase` 를 각도가 아니라 `sin`/`cos` 로 주는 이유: 한 바퀴 돌 때 값이 튀지
+않음.
+
+### 행동
+
+```
+관절 목표 = 기본 자세 + action_scale x 행동
+```
+
+기본 자세가 전부 0 이라 두 번째 항만 남음. `action_scale` 은 balance 0.25,
+hopping 0.5 임 — 시뮬 설정에서 그대로 옮긴 값.
+
+### 단위
+
+```
+저장소   도, 도/초
+모델     라디안, rad/s
+```
+
+여기서 바꿈. 모델 경계가 단위가 갈리는 유일한 자리임.
+
+### 정규화는 모델 쪽에서
+
+학습 중에 쌓인 평균·표준편차가 가중치 파일에 들어 있음.
+
+```
+정규화된 입력 = (관찰 - mean) / std
+```
+
+**빼먹으면 모델이 전혀 다르게 동작함.** `policy.py` 는 정규화까지 끝난 벡터를
+받는 것을 모델로 봄 — 프레임워크(torch 등)를 가리지 않으려는 것임.
+
+### 발목만 다르게 풀림
+
+```
+id 7~10   모델이 낸 각도를 그 모터에 그대로
+id 11,12  ankle_pitch/ankle_roll -> 기구학을 거쳐 모터로
+```
+
+시뮬에서는 발목 두 축이 독립 관절이고 각자 서보가 붙어 있음. 실물은 모터 두 개가
+로드로 둘을 같이 만들어서, `Leg` 가 `ankle_output` 에 따라 각도나 토크로 내려보냄.

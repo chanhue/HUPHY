@@ -257,6 +257,8 @@ class Leg(Robot):
             out[f"{motor}.temp"] = float
         out["ankle_pitch.pos"] = float
         out["ankle_roll.pos"] = float
+        out["ankle_pitch.vel"] = float
+        out["ankle_roll.vel"] = float
         out["stale_motors"] = int
         return out
 
@@ -375,6 +377,7 @@ class Leg(Robot):
         pitch, roll = self._ankle_pose if self._ankle_pose is not None else self._ankle_guess
         out["ankle_pitch.pos"] = pitch
         out["ankle_roll.pos"] = roll
+        out["ankle_pitch.vel"], out["ankle_roll.vel"] = self.ankle_velocity()
 
         out["stale_motors"] = stale
         return out
