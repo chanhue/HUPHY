@@ -3,7 +3,7 @@
   "limb": "right_leg",
   "note": "오른다리 실측값. 로봇을 만져서 알아내는 값만 담음 -- sign, offset_deg, zero_reference, limits_deg. 게인은 같은 모델로 갈면 그대로 쓰는 값이라 robot.yaml 에 있음 (이슈 #2). 관절 이름으로 키를 맞춤: CAN id 는 바뀔 수 있지만 관절 자리는 그대로임. zero_reference 는 commission zero 가, limits_deg 와 offset_deg 는 commission sweep 이 적음. sign 은 설계가 정한 값이라 쓰는 코드가 없음. offset_deg 가 0 이라 지금은 cal 공간과 raw 공간이 같은 숫자임.",
   "motors": {
-    "hipz": {
+    "hip_pitch": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",
@@ -12,7 +12,7 @@
         -21.07
       ]
     },
-    "hipx": {
+    "hip_roll": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",
@@ -21,7 +21,7 @@
         79.64
       ]
     },
-    "hipy": {
+    "hip_yaw": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",
@@ -39,7 +39,7 @@
         74.79
       ]
     },
-    "ankle_a1": {
+    "ankle_a": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",
@@ -48,7 +48,7 @@
         43.16
       ]
     },
-    "ankle_a2": {
+    "ankle_b": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",

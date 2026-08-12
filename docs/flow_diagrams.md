@@ -182,7 +182,7 @@ graph TD
     C -->|하나만| ERR2[ValueError]
     C -->|둘 다| IK[kinematics.solve_ik]
     IK -->|안 풀림| DROP[발목 통째로 버림]
-    IK -->|풀림| T["모터별 cal 목표  {knee: 30.0, ankle_a1: ..., ankle_a2: ...}"]
+    IK -->|풀림| T["모터별 cal 목표  {knee: 30.0, ankle_a: ..., ankle_b: ...}"]
     C -->|발목 없음| T
 
     T --> G[safety.guards.apply]

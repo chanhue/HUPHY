@@ -3,15 +3,30 @@
 `Robot` 계약을 채움. 설정·실측값·버스·기구학·안전을 한데 모아 쓰는 유일한 계층임.
 
 
+## 좌표계와 관절 이름
+
+**오른손 좌표계, X 가 앞(발이 나가는 방향), Z 가 위, Y 가 왼쪽.**
+
+    roll    X축 회전    다리를 옆으로 기울임
+    pitch   Y축 회전    다리를 앞뒤로 듦
+    yaw     Z축 회전    발끝 방향을 돌림
+
+관절 이름이 곧 어느 축인지를 말함. 이름만 보고 알 수 있어야 함 -- 예전 이름
+(`hipz`/`hipx`/`hipy`)은 어느 좌표계 기준인지 적혀 있지 않아 매번 실물로 확인해야
+했음.
+
+
 ## 관절과 모터가 1:1 이 아님
 
-    hipz  hipx  hipy  knee    모터 하나가 관절 하나
-    ankle_pitch  ankle_roll   모터 **두 개**가 관절 두 개를 만듦
+    hip_pitch  hip_roll  hip_yaw  knee    모터 하나가 관절 하나
+    ankle_pitch  ankle_roll             모터 **두 개**가 관절 두 개를 만듦
 
 그래서 명령은 6개 관절로 받고, 발목만 기구학을 거쳐 모터 두 개로 풀림.
 
-    명령    hipz hipx hipy knee ankle_pitch ankle_roll     6개
-    모터    m7   m8   m9   m10  m11 m12                    6개
+    명령    hip_pitch  hip_roll  hip_yaw  knee  ankle_pitch  ankle_roll
+    모터    m7         m8        m9       m10   m11          m12
+
+기구 순서도 이 순서임 -- 몸통에서 발로 내려가며 pitch, roll, yaw, knee, 발목.
 
 
 ## 한 주기에 일어나는 일
@@ -60,9 +75,9 @@ from .base import Action, Observation, Robot
 
 logger = logging.getLogger(__name__)
 
-SINGLE_JOINTS = ("hipz", "hipx", "hipy", "knee")
+SINGLE_JOINTS = ("hip_pitch", "hip_roll", "hip_yaw", "knee")
 ANKLE_JOINTS = ("ankle_pitch", "ankle_roll")
-ANKLE_MOTORS = ("ankle_a1", "ankle_a2")
+ANKLE_MOTORS = ("ankle_a", "ankle_b")
 
 JOINT_NAMES = SINGLE_JOINTS + ANKLE_JOINTS
 REQUIRED_MOTORS = SINGLE_JOINTS + ANKLE_MOTORS
@@ -86,7 +101,7 @@ MIT 프레임은 하나고 칸이 다섯임 (q, dq, kp, kd, tau_ff). 두 가지 
 class Leg(Robot):
     """다리 하나. CAN 채널 하나를 씀.
 
-    설정에는 모터가 `ankle_a1`/`ankle_a2` 로 있지만, 명령은 `ankle_pitch`/
+    설정에는 모터가 `ankle_a`/`ankle_b` 로 있지만, 명령은 `ankle_pitch`/
     `ankle_roll` 로 받음 — 사람과 보행 궤적이 다루는 것은 관절이지 링키지가 아님.
     """
 
@@ -382,8 +397,8 @@ class Leg(Robot):
         못 풀면 `None` 로 둠. 추정(`_ankle_guess`)은 그대로 두어 다음 주기가 마지막
         성공 지점에서 다시 시작하게 함.
         """
-        a1 = self.raw_to_cal("ankle_a1", self.bus.state(self._motor_id("ankle_a1")).position_deg)
-        a2 = self.raw_to_cal("ankle_a2", self.bus.state(self._motor_id("ankle_a2")).position_deg)
+        a1 = self.raw_to_cal("ankle_a", self.bus.state(self._motor_id("ankle_a")).position_deg)
+        a2 = self.raw_to_cal("ankle_b", self.bus.state(self._motor_id("ankle_b")).position_deg)
         try:
             pose = self.kinematics.solve_fk(
                 a1, a2,
@@ -431,8 +446,8 @@ class Leg(Robot):
                 # 통째로 버림. 한쪽만 보내면 두 로드가 다른 자세를 요구해 비틀림.
                 logger.warning("%s 발목 목표를 버림: %s", self.id, e)
             else:
-                targets["ankle_a1"] = a1
-                targets["ankle_a2"] = a2
+                targets["ankle_a"] = a1
+                targets["ankle_b"] = a2
 
         return targets
 
@@ -532,12 +547,12 @@ class Leg(Robot):
 
         sent["ankle_pitch"] = float(action["ankle_pitch"])
         sent["ankle_roll"] = float(action["ankle_roll"])
-        self._last_torque = {"ankle_a1": tau1, "ankle_a2": tau2}
+        self._last_torque = {"ankle_a": tau1, "ankle_b": tau2}
         return {
-            self._motor_id("ankle_a1"): MitCommand(
+            self._motor_id("ankle_a"): MitCommand(
                 position_deg=0.0, kp=0.0, kd=0.0, torque_nm=tau1
             ),
-            self._motor_id("ankle_a2"): MitCommand(
+            self._motor_id("ankle_b"): MitCommand(
                 position_deg=0.0, kp=0.0, kd=0.0, torque_nm=tau2
             ),
         }
@@ -556,8 +571,8 @@ class Leg(Robot):
         try:
             jac = self.kinematics.jacobian(pose[0], pose[1])
             motor = np.array([
-                self.bus.state(self._motor_id("ankle_a1")).velocity_deg_s,
-                self.bus.state(self._motor_id("ankle_a2")).velocity_deg_s,
+                self.bus.state(self._motor_id("ankle_a")).velocity_deg_s,
+                self.bus.state(self._motor_id("ankle_b")).velocity_deg_s,
             ])
             joint = np.linalg.solve(jac, motor)
         except (AnkleUnreachableError, np.linalg.LinAlgError):
@@ -578,7 +593,7 @@ class Leg(Robot):
             return out
         try:
             pitch, roll = self.kinematics.solve_fk(
-                motor_cal["ankle_a1"], motor_cal["ankle_a2"],
+                motor_cal["ankle_a"], motor_cal["ankle_b"],
                 guess_pitch_deg=self._ankle_guess[0],
                 guess_roll_deg=self._ankle_guess[1],
             )

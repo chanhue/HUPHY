@@ -35,7 +35,7 @@ limbs:
     calibration: calibration/right_leg.json
     motors:
       knee:     {id: 10, model: RS02}
-      ankle_a1: {id: 11, model: RS00}
+      ankle_a: {id: 11, model: RS00}
   left_leg:
     kind: leg
     side: left
@@ -51,7 +51,7 @@ CALIBRATION = {
     "motors": {
         "knee": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": "",
                  "limits_deg": [-20.65, 74.79]},
-        "ankle_a1": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": "",
+        "ankle_a": {"sign": 1.0, "offset_deg": 0.0, "zero_reference": "",
                      "limits_deg": [-79.77, 43.16]},
     },
 }
@@ -160,11 +160,11 @@ class TestScan:
     def test_lists_every_joint(self, run):
         code, out = run("--limb", "right_leg", "scan")
         assert "knee" in out.out
-        assert "ankle_a1" in out.out
+        assert "ankle_a" in out.out
 
     def test_marks_the_silent_one(self, run):
         code, out = run("--limb", "right_leg", "scan")
-        assert "응답 없음: ['ankle_a1']" in out.out
+        assert "응답 없음: ['ankle_a']" in out.out
         assert code == 1
 
     def test_success_when_all_answer(self, run):
@@ -242,7 +242,7 @@ class TestNudge:
 
     def test_refuses_a_silent_motor(self, run, capsys):
         """응답 없는 모터에 토크를 넣지 않음. 배선부터 확인할 일임."""
-        code, out = run("--limb", "right_leg", "nudge", "ankle_a1")
+        code, out = run("--limb", "right_leg", "nudge", "ankle_a")
         assert code == 1
         assert "배선과 CAN id" in out.err
 
@@ -325,7 +325,7 @@ class TestZero:
     def test_leaves_other_joints_alone(self, run, cfg):
         run("--limb", "right_leg", "zero", "knee", "--note", "편 상태", "--yes")
         data = json.loads((cfg.parent / "calibration" / "right_leg.json").read_text(encoding="utf-8"))
-        assert data["motors"]["ankle_a1"]["zero_reference"] == ""
+        assert data["motors"]["ankle_a"]["zero_reference"] == ""
 
     def test_note_is_required(self, run):
         with pytest.raises(SystemExit):
@@ -343,10 +343,10 @@ class TestZero:
         """응답이 없는 모터는 메모가 비어 남음. 어느 것이 실패했는지 알려줌."""
         code, out = run("--limb", "right_leg", "zero", "--note", "편 상태", "--yes")
         assert code == 1
-        assert "ankle_a1" in out.out
+        assert "ankle_a" in out.out
         data = json.loads((cfg.parent / "calibration" / "right_leg.json").read_text(encoding="utf-8"))
         assert data["motors"]["knee"]["zero_reference"] == "편 상태"
-        assert data["motors"]["ankle_a1"]["zero_reference"] == ""
+        assert data["motors"]["ankle_a"]["zero_reference"] == ""
 
     def test_points_at_sweep_next(self, run):
         """영점 뒤에 범위를 재야 함. 자세를 그대로 두고."""
@@ -385,7 +385,7 @@ class TestTargeting:
         """화면이 아니면 물어볼 수 없음. 전부가 기본인 명령은 전부로 감."""
         FakeBus.online = {10, 11}
         _, out = run("--limb", "right_leg", "zero", "--note", "편 상태", "--yes")
-        assert "knee" in out.out and "ankle_a1" in out.out
+        assert "knee" in out.out and "ankle_a" in out.out
 
     def test_omitted_joint_is_refused_where_one_is_required(self, run):
         """nudge 는 한 관절만 움직임. 물어볼 수 없으면 고를 방법이 없음."""
@@ -481,22 +481,22 @@ class TestOptions:
 # ===========================================================================
 class TestSweepSteps:
     def test_lone_joints_are_one_step_each(self):
-        assert commission._steps(["hipz", "knee"]) == [["hipz"], ["knee"]]
+        assert commission._steps(["hip_pitch", "knee"]) == [["hip_pitch"], ["knee"]]
 
     def test_ankle_motors_share_a_step(self):
         """로드로 발판에 물려 있어 한쪽만 손으로 돌릴 수 없음."""
-        assert commission._steps(["ankle_a1", "ankle_a2"]) == [["ankle_a1", "ankle_a2"]]
+        assert commission._steps(["ankle_a", "ankle_b"]) == [["ankle_a", "ankle_b"]]
 
     def test_order_follows_the_joint_list(self):
-        steps = commission._steps(["hipz", "ankle_a1", "knee", "ankle_a2"])
-        assert steps == [["hipz"], ["ankle_a1", "ankle_a2"], ["knee"]]
+        steps = commission._steps(["hip_pitch", "ankle_a", "knee", "ankle_b"])
+        assert steps == [["hip_pitch"], ["ankle_a", "ankle_b"], ["knee"]]
 
     def test_half_a_pair_stands_alone(self):
         """한쪽만 골랐으면 그 하나만 잼."""
-        assert commission._steps(["ankle_a2"]) == [["ankle_a2"]]
+        assert commission._steps(["ankle_b"]) == [["ankle_b"]]
 
     def test_every_joint_appears_once(self):
-        joints = ["hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"]
+        joints = ["hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b"]
         flat = [j for step in commission._steps(joints) for j in step]
         assert sorted(flat) == sorted(joints)
 
@@ -511,7 +511,7 @@ class TestSweepNeedsAScreen:
 # ===========================================================================
 # sweep 결과 저장
 # ===========================================================================
-NAMES = {10: "knee", 11: "ankle_a1"}
+NAMES = {10: "knee", 11: "ankle_a"}
 IDS = {name: mid for mid, name in NAMES.items()}
 
 
@@ -552,9 +552,9 @@ class TestSweepSavesEachStep:
     def test_later_steps_do_not_erase_earlier_ones(self, limb, saved):
         """단계마다 파일을 다시 읽고 쓰므로 앞 단계가 남아 있어야 함."""
         commission._save_sweep(limb, _results(knee=30.0), NAMES)
-        commission._save_sweep(limb, _results(ankle_a1=25.0), NAMES)
+        commission._save_sweep(limb, _results(ankle_a=25.0), NAMES)
         assert saved()["knee"]["limits_deg"] == [0.0, 30.0]
-        assert saved()["ankle_a1"]["limits_deg"] == [0.0, 25.0]
+        assert saved()["ankle_a"]["limits_deg"] == [0.0, 25.0]
 
     def test_it_names_what_it_wrote(self, limb):
         assert commission._save_sweep(limb, _results(knee=30.0), NAMES) == ["knee"]
@@ -570,14 +570,14 @@ class TestSweepSkipsUnmovedJoints:
 
     def test_an_unmoved_joint_does_not_block_the_others(self, limb, saved):
         written = commission._save_sweep(
-            limb, _results(knee=30.0, ankle_a1=0.0), NAMES
+            limb, _results(knee=30.0, ankle_a=0.0), NAMES
         )
         assert written == ["knee"]
         assert saved()["knee"]["limits_deg"] == [0.0, 30.0]
 
     def test_an_unmoved_joint_keeps_its_old_limits(self, limb, saved):
-        commission._save_sweep(limb, _results(knee=30.0, ankle_a1=0.0), NAMES)
-        assert saved()["ankle_a1"]["limits_deg"] == [-79.77, 43.16]
+        commission._save_sweep(limb, _results(knee=30.0, ankle_a=0.0), NAMES)
+        assert saved()["ankle_a"]["limits_deg"] == [-79.77, 43.16]
 
     def test_nothing_moved_writes_nothing(self, limb, cfg):
         path = cfg.parent / "calibration" / "right_leg.json"
@@ -587,16 +587,16 @@ class TestSweepSkipsUnmovedJoints:
 
     def test_the_report_names_them(self, limb, capsys):
         code = commission._sweep_report(
-            limb, _results(knee=30.0, ankle_a1=0.0), NAMES
+            limb, _results(knee=30.0, ankle_a=0.0), NAMES
         )
         out = capsys.readouterr().out
-        assert "ankle_a1" in out
-        assert "sweep ankle_a1" in out          # 그것만 다시 재는 명령
+        assert "ankle_a" in out
+        assert "sweep ankle_a" in out          # 그것만 다시 재는 명령
         assert code == 1
 
     def test_the_report_is_clean_when_every_joint_moved(self, limb):
         code = commission._sweep_report(
-            limb, _results(knee=30.0, ankle_a1=25.0), NAMES
+            limb, _results(knee=30.0, ankle_a=25.0), NAMES
         )
         assert code == 0
 

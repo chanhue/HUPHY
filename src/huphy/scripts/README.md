@@ -48,7 +48,7 @@ huphy-commission --limb right_leg zero knee --note "다리 편 상태" --yes
 ```
   right_leg -- 무엇을 영점 잡을까요?
 
-    1) hipz       id=7   RS02
+    1) hip_pitch  id=7   RS02
     ...
     a) 전부
 
@@ -100,17 +100,17 @@ protocol    프로토콜 전환. 전원 재투입 필요
 ```
 right_leg  can1  모터 6개
 
-  hipz       id=7   RS02   응답
-  ankle_a2   id=12  RS00   ----
+  hip_pitch  id=7   RS02   응답
+  ankle_b    id=12  RS00   ----
 
-응답 없음: ['ankle_a2']
+응답 없음: ['ankle_b']
 ```
 
 ### `state`
 
 ```
   관절               raw       cal        속도       토크     온도
-  knee           29.99     29.99     -0.46     0.39   32.5
+  knee       29.99     29.99     -0.46     0.39   32.5
 
   미실측 상태라 cal 이 raw 와 같음.
 ```
@@ -136,11 +136,11 @@ right_leg 가동 범위 측정 -- 5단계, 초당 20번 잽니다.
        양쪽 끝까지 미세요. 끝나면 Enter.
 
        관절                최소        지금        최대        범위
-       knee          -20.61     30.12     74.76     95.37
+       knee       -20.61     30.12     74.76     95.37
 ```
 
 0도가 먼저임. `measure_offset` 이 `offset = -raw` 를 내고, 그 뒤 `cal = raw + offset`
-으로 최대·최소를 굴림. `ankle_a1` 과 `ankle_a2` 는 한 단계로 묶임(`LINKED`).
+으로 최대·최소를 굴림. `ankle_a` 과 `ankle_b` 는 한 단계로 묶임(`LINKED`).
 
 단계가 끝날 때마다 캘리브레이션 파일에 적음. 오프셋과 한계각이 같이 들어가고,
 `sign` 과 `zero_reference` 는 건드리지 않음.
@@ -187,9 +187,9 @@ right_leg.knee (id=10) 를 +5.0도 움직였다 되돌림.
 ```
   자세를 잡은 채로 관절마다 Enter.
 
-  hipz       Enter:
-  hipz       잡음
-  hipx       실패 -- 응답 없음
+  hip_pitch  Enter:
+  hip_pitch  잡음
+  hip_roll   실패 -- 응답 없음
 ```
 
 프레임이 실제로 나간 관절만 메모가 저장됨. 하나라도 실패하면 종료 코드 `1`.
@@ -290,9 +290,9 @@ menu -> motion -> ControlLoop -> Leg -> bus
 
 ```
   관절             raw       cal      속도     토크   온도     응답  마지막 응답
-  hipz          -60.01    -60.01     -0.46     0.32   30.0     받음       0.02ms
-  knee          -60.01    -60.01     -0.46     0.32   30.0     씹힘      254.9초
-  ankle_a2      -60.01    -60.01     -0.46     0.32   30.0 명령안함         없음
+  hip_pitch  -60.01    -60.01     -0.46     0.32   30.0     받음       0.02ms
+  knee       -60.01    -60.01     -0.46     0.32   30.0     씹힘      254.9초
+  ankle_b    -60.01    -60.01     -0.46     0.32   30.0 명령안함         없음
 
   발목  pitch   -0.00   roll    0.01
 ```
@@ -329,7 +329,7 @@ IMU 가 붙어 있으면 이어서 나옴. 없으면 이 표가 아예 안 나�
 ```
   ** 한계 밖에 있는 관절 **
   토크를 넣으면 가드가 한계 안으로 끌어당김 -- 그 방향으로 움직임.
-    knee         200.00  한계 -20.65 ~ 74.79
+    knee       200.00  한계 -20.65 ~ 74.79
 ```
 
 ### 카운터 보기
@@ -408,11 +408,11 @@ IMU 가 붙어 있으면 이어서 나옴. 없으면 이 표가 아예 안 나�
 한 관절만 지금 자리에서 조금 옮김. 나머지는 지금 자리에 붙잡아 둠.
 
 ```
-  관절: hipz, hipx, hipy, knee, ankle_pitch, ankle_roll
+  관절: hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll
   이름: knee
   얼마나 (도) [5.0]:
 
-  knee  29.99 -> 34.99 도
+  knee       29.99 -> 34.99 도
 
   250주기 2.5초 (평균 100.0Hz / 목표 100Hz), 밀림 0회, 최악 10.4ms, 무응답 주기 0회
 ```
@@ -428,7 +428,7 @@ IMU 가 붙어 있으면 이어서 나옴. 없으면 이 표가 아예 안 나�
   이름: knee
   계단 크기 (도) [10.0]:
 
-  knee  29.99 -> 39.99 도
+  knee       29.99 -> 39.99 도
   그래프에서 볼 것:
     못 미침    kp 부족      지나쳤다 돌아옴  kd 부족
     떨림       kp 과함      느리게 도달      kp 올릴 여지
@@ -448,7 +448,7 @@ IMU 가 붙어 있으면 이어서 나옴. 없으면 이 표가 아예 안 나�
   주파수 (Hz) [0.5]:
   길이 (초) [3.0]:
 
-  knee  29.99 도를 중심으로 ±5.0 도, 0.5 Hz
+  knee       29.99 도를 중심으로 ±5.0 도, 0.5 Hz
 
   350주기 3.5초 (평균 100.0Hz / 목표 100Hz), 밀림 0회, 최악 10.4ms, 무응답 주기 0회
 ```
@@ -494,7 +494,7 @@ huphy-test --limb right_leg range --period 10 --margin 8
 관절 한계의 출처가 둘임.
 
 ```
-hipz hipx hipy knee     캘리브레이션 파일의 limits_deg
+hip_pitch hip_roll hip_yaw knee     캘리브레이션 파일의 limits_deg
 ankle_pitch ankle_roll  AnkleEnvelope 의 시험 범위
 ```
 

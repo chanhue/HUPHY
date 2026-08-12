@@ -46,7 +46,7 @@ class FakeRobot:
 
     name = "leg"
 
-    def __init__(self, robot_id="right_leg", motors=("knee", "ankle_a1")):
+    def __init__(self, robot_id="right_leg", motors=("knee", "ankle_a")):
         self.id = robot_id
         self.motor_names = motors
         self.counters = FakeCounters()
@@ -150,7 +150,7 @@ class TestBuild:
         실측을 목표로 둬서 오차가 0이 되게 함 — 가짜 오차가 그래프에 남는 것보다 나음.
         """
         data = snapshot.build(robot, t=0.0)
-        assert data["right_leg/ankle_a1/err"] == 0.0
+        assert data["right_leg/ankle_a/err"] == 0.0
 
     def test_counters_are_included(self, robot):
         data = snapshot.build(robot, t=0.0)
@@ -215,7 +215,7 @@ class TestUdp:
     @pytest.mark.parametrize("builder", [snapshot.build_fast, snapshot.build_diag])
     def test_each_packet_fits(self, receiver, builder):
         """다리 하나의 한 패킷은 들어감. 둘을 합치면 넘침 — 그래서 나눠 보냄."""
-        full = FakeRobot(motors=("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"))
+        full = FakeRobot(motors=("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b"))
         port = receiver.getsockname()[1]
         with UdpSink("127.0.0.1", port) as sink:
             sink.send(builder(full, t=0.0))
@@ -226,9 +226,9 @@ class TestUdp:
         """나눈 이유를 고정함. 합치면 MTU 를 넘어 조각나고, 조각 하나만 잃어도
         패킷 전체가 버려짐.
         """
-        full = FakeRobot(motors=("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"))
+        full = FakeRobot(motors=("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b"))
         both = snapshot.build(full, t=0.0)
-        left = FakeRobot("left_leg", motors=("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"))
+        left = FakeRobot("left_leg", motors=("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b"))
         merged = snapshot.merge(both, snapshot.build(left, t=0.0))
         port = receiver.getsockname()[1]
         with UdpSink("127.0.0.1", port) as sink:
@@ -422,7 +422,7 @@ class TestTelemetry:
 class AnkleRobot(FakeRobot):
     """발목 관절을 가진 로봇. 모터 값과 축이 다름."""
 
-    joint_names = ("hipz", "knee", "ankle_pitch", "ankle_roll")
+    joint_names = ("hip_pitch", "knee", "ankle_pitch", "ankle_roll")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -439,33 +439,33 @@ class AnkleRobot(FakeRobot):
 class TorqueRobot(FakeRobot):
     """토크를 실어 보낼 수 있는 로봇."""
 
-    torque_motors = ("ankle_a1",)
+    torque_motors = ("ankle_a",)
 
     def __init__(self, commanded=None, **kwargs):
         super().__init__(**kwargs)
-        self.last_torque = commanded if commanded is not None else {"ankle_a1": 1.5}
+        self.last_torque = commanded if commanded is not None else {"ankle_a": 1.5}
 
 
 class TestCommandedTorque:
     """모터가 보고한 `tau` 와 우리가 시킨 `tau_cmd` 는 다른 값임."""
 
     def test_the_column_exists(self):
-        assert "right_leg/ankle_a1/tau_cmd" in snapshot.field_names(TorqueRobot())
+        assert "right_leg/ankle_a/tau_cmd" in snapshot.field_names(TorqueRobot())
 
     def test_it_is_what_we_sent(self):
         row = snapshot.build_fast(TorqueRobot(), t=0.0)
-        assert row["right_leg/ankle_a1/tau_cmd"] == 1.5
+        assert row["right_leg/ankle_a/tau_cmd"] == 1.5
 
     def test_it_sits_next_to_the_reported_torque(self):
         """둘을 같이 봐야 적게 시킨 것인지 못 낸 것인지 구분됨."""
         row = snapshot.build_fast(TorqueRobot(), t=0.0)
-        assert "right_leg/ankle_a1/tau" in row
-        assert "right_leg/ankle_a1/tau_cmd" in row
+        assert "right_leg/ankle_a/tau" in row
+        assert "right_leg/ankle_a/tau_cmd" in row
 
     def test_nothing_commanded_is_zero(self):
         """위치 모드에서는 늘 0임. 열이 사라지면 CSV 가 밀림."""
         row = snapshot.build_fast(TorqueRobot(commanded={}), t=0.0)
-        assert row["right_leg/ankle_a1/tau_cmd"] == 0.0
+        assert row["right_leg/ankle_a/tau_cmd"] == 0.0
 
     def test_a_robot_without_torque_motors_gets_no_column(self, robot):
         assert not any("tau_cmd" in n for n in snapshot.field_names(robot))
@@ -480,7 +480,7 @@ class TestAnkleJointFields:
         """모터 값만 보면 발이 어떤 자세인지 안 보임."""
         names = snapshot.field_names(AnkleRobot())
         assert "right_leg/ankle_pitch/pos" in names
-        assert "right_leg/ankle_a1/pos" in names          # 모터 값도 그대로
+        assert "right_leg/ankle_a/pos" in names          # 모터 값도 그대로
 
     def test_build_matches_the_field_names(self):
         ankle = AnkleRobot()
@@ -515,7 +515,7 @@ class TestAnkleJointFields:
     def test_the_fast_packet_still_fits(self):
         """다리 하나가 이미 MTU 에 가까움. 열이 늘면 확인해야 함."""
         row = snapshot.build_fast(AnkleRobot(motors=(
-            "hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2")), t=0.0)
+            "hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b")), t=0.0)
         payload = json.dumps({k: round(v, 2) for k, v in row.items()},
                              separators=(",", ":")).encode()
         assert len(payload) <= MTU_LIMIT

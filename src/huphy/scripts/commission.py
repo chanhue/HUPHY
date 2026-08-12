@@ -451,7 +451,7 @@ def _wait_enter(prompt: str) -> None:
     print()
 
 
-LINKED = (("ankle_a1", "ankle_a2"),)
+LINKED = (("ankle_a", "ankle_b"),)
 """손으로 갈라 움직일 수 없는 관절 묶음.
 
 발목 두 모터는 로드로 발판에 물려 있어 한쪽만 돌릴 수 없음. 발을 잡고 움직이면

@@ -3,19 +3,19 @@
   "limb": "left_leg",
   "note": "왼다리 실측값. 아직 연결되지 않았고 전부 재기 전임. limits_deg 가 null 인 것은 '제한 없음' 이 아니라 '아직 안 잼' 이라는 뜻이고, 그 상태에서는 Motor.is_configured 가 False 라 제어 진입이 막힘. sign 은 설계가 정한 값이고, 왼다리 발목의 거울상은 AnkleGeometry.mirrored 가 처리함 (이슈 #13).",
   "motors": {
-    "hipz": {
+    "hip_pitch": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",
       "limits_deg": null
     },
-    "hipx": {
+    "hip_roll": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",
       "limits_deg": null
     },
-    "hipy": {
+    "hip_yaw": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",
@@ -27,13 +27,13 @@
       "zero_reference": "",
       "limits_deg": null
     },
-    "ankle_a1": {
+    "ankle_a": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",
       "limits_deg": null
     },
-    "ankle_a2": {
+    "ankle_b": {
       "sign": 1.0,
       "offset_deg": 0.0,
       "zero_reference": "",

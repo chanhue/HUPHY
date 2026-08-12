@@ -86,7 +86,7 @@ class TestMotor:
             Motor(id=10, model="RS02", limits_deg=(30.0, 30.0))
 
     def test_negative_range_is_fine(self):
-        """양쪽이 다 음수여도 lo < hi 면 정상임. hipz가 그런 관절임."""
+        """양쪽이 다 음수여도 lo < hi 면 정상임. hip_pitch 가 그런 관절임."""
         m = Motor(id=7, model="RS02", limits_deg=(-117.07, -21.07))
         assert m.limits_deg == (-117.07, -21.07)
 

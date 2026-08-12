@@ -376,12 +376,12 @@ RS02 매뉴얼 p.27 §4 "Protocol Switching" — `protocol_1` 또는 Type 25로 
 ### 무엇
 
     오른다리 (can1)          왼다리 (can0)
-     7  hipz                  1  hipz
-     8  hipx                  2  hipx
-     9  hipy                  3  hipy
+     7  hip_pitch                  1  hip_pitch
+     8  hip_roll                  2  hip_roll
+     9  hip_yaw                  3  hip_yaw
     10  knee                  4  knee
-    11  ankle_a1              5  ankle_a1
-    12  ankle_a2              6  ankle_a2
+    11  ankle_a              5  ankle_a
+    12  ankle_b              6  ankle_b
 
 ### 왜 확인이 필요했나
 
@@ -611,7 +611,7 @@ MotorStudio 같은 외부 도구로 확인함. 사용자가 MIT 프로토콜로 
 실물에서 확인할 것.
 
     1. 어느 다리의 발목인지 도면·조립 기록에서 찾기
-    2. commission nudge ankle_a1 -> 발이 어느 쪽으로 도는지 눈으로 확인
+    2. commission nudge ankle_a -> 발이 어느 쪽으로 도는지 눈으로 확인
     3. IK 로 pitch 10도를 명령하고 실제 발 각도를 재기
     4. 반대쪽 다리를 실측해 mirrored() 결과와 대조
 

@@ -28,7 +28,7 @@ class FakeRobot:
         self.connected = False
         self.torque = False
         self._missing = tuple(missing)
-        self._pos = {"knee": 0.0, "hipz": 0.0}
+        self._pos = {"knee": 0.0, "hip_pitch": 0.0}
         self.last_sent = {}
         self.sent_actions = []
 
@@ -154,8 +154,8 @@ class TestMotions:
 
     def test_step_holds_the_others(self):
         """한 관절만 흔들며 나머지는 붙잡아 둠. 아니면 원인이 섞임."""
-        m = motions.step("knee", start=0.0, end=30.0, hold_others={"hipz": -50.0})
-        assert m(0.0, {})["hipz"] == -50.0
+        m = motions.step("knee", start=0.0, end=30.0, hold_others={"hip_pitch": -50.0})
+        assert m(0.0, {})["hip_pitch"] == -50.0
 
     def test_sine_starts_at_the_center(self):
         """토크를 넣는 순간 튀지 않게 함."""

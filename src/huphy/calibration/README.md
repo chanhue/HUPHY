@@ -150,7 +150,7 @@ from huphy.config import load_robot
 leg = load_robot("config/robot.yaml").limb("right_leg")
 
 c = cal.load(leg.calibration_path)
-cal.unmeasured(c)              # ('hipz', 'hipx', ...) -- 지금은 전부
+cal.unmeasured(c)              # ('hip_pitch', 'hip_roll', ...) -- 지금은 전부
 by_id = cal.attach(c, leg.motors)
 by_id[10].raw_to_cal(45.0)     # 45.0 (아직 항등)
 

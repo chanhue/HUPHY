@@ -67,8 +67,8 @@ right_leg/ankle_pitch/err    tgt - pos
 right_leg/ankle_pitch/vel    실측 각속도. 모터 속도를 야코비안으로 푼 것
 right_leg/ankle_roll/...     같은 넷
 
-right_leg/ankle_a1/tau_cmd   tau_ff 로 실어 보낸 토크
-right_leg/ankle_a2/tau_cmd
+right_leg/ankle_a/tau_cmd   tau_ff 로 실어 보낸 토크
+right_leg/ankle_b/tau_cmd
 ```
 
 `tau` 와 `tau_cmd` 는 다른 값임 — 앞은 **모터가 냈다고 보고한 값**이고 뒤는
@@ -76,7 +76,7 @@ right_leg/ankle_a2/tau_cmd
 못 낸 것인지(전류 한계·마찰·걸림) 구분됨. 위치 모드에서는 `tau_cmd` 가 늘 0임 —
 모드에 따라 열이 나타났다 사라지면 CSV 가 밀림.
 
-발목만 **관절 축**을 따로 냄. 모터 값(`ankle_a1/pos`)만 보면 발이 어떤 자세인지 안
+발목만 **관절 축**을 따로 냄. 모터 값(`ankle_a/pos`)만 보면 발이 어떤 자세인지 안
 보임 — 두 모터가 로드로 물려 있어 각도 하나가 자세 하나에 대응하지 않음. 모터 값도
 그대로 나가므로 둘을 같이 볼 수 있음.
 
@@ -157,7 +157,7 @@ imu/main/age                 마지막 패킷 이후 경과 (ms). 한 번도 없
 
 ```
 모터           ack  miss   age(ms)
-ankle_a2      -1.0   1.0     -1.00   <- 한 번도 응답 없음
+ankle_b      -1.0   1.0     -1.00   <- 한 번도 응답 없음
 reject_nostate 3.0                    <- 매 주기 거부됨
 can/tx_errors  0.0                    <- 배선이 아니라 모터가 무시하는 것
 ```

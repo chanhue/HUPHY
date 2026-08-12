@@ -93,18 +93,18 @@ right_leg.collect()
 ### 관절과 모터가 1:1 이 아님
 
 ```
-hipz  hipx  hipy  knee     모터 하나가 관절 하나
+hip_pitch  hip_roll  hip_yaw  knee     모터 하나가 관절 하나
 ankle_pitch  ankle_roll    모터 두 개가 관절 두 개를 만듦
 ```
 
 명령은 **관절 6개**로 받고, 발목만 기구학을 거쳐 모터 두 개로 풀림.
 
 ```python
-leg.joint_names   ('hipz', 'hipx', 'hipy', 'knee', 'ankle_pitch', 'ankle_roll')
-leg.motor_names   ('hipz', 'hipx', 'hipy', 'knee', 'ankle_a1', 'ankle_a2')
+leg.joint_names   ('hip_pitch', 'hip_roll', 'hip_yaw', 'knee', 'ankle_pitch', 'ankle_roll')
+leg.motor_names   ('hip_pitch', 'hip_roll', 'hip_yaw', 'knee', 'ankle_a', 'ankle_b')
 ```
 
-설정에는 모터가 `ankle_a1`/`ankle_a2` 로 있음. **사람과 보행 궤적이 다루는 것은
+설정에는 모터가 `ankle_a`/`ankle_b` 로 있음. **사람과 보행 궤적이 다루는 것은
 관절이지 링키지가 아님.**
 
 ### 한 주기에 일어나는 일
@@ -153,8 +153,8 @@ leg.build_commands({"ankle_pitch": 5.0})
 ### 관찰은 모터 단위 + 발목각, 명령은 관절 단위
 
 ```python
-leg.action_features        {'hipz': float, ..., 'ankle_pitch': float, 'ankle_roll': float}
-leg.observation_features   {'knee.pos': float, ..., 'ankle_a1.pos': float,
+leg.action_features        {'hip_pitch': float, ..., 'ankle_pitch': float, 'ankle_roll': float}
+leg.observation_features   {'knee.pos': float, ..., 'ankle_a.pos': float,
                             'ankle_pitch.pos': float, 'ankle_roll.pos': float,
                             'stale_motors': int}
 ```

@@ -54,14 +54,24 @@ RobStride RS00 x2    발목 링키지
 ### CAN id 와 모델
 
 ```
-오른다리 (can1)                왼다리 (can0)
- 7   hipz      RS02             1   hipz      RS02
- 8   hipx      RS02             2   hipx      RS02
- 9   hipy      RS02             3   hipy      RS02
-10   knee      RS02             4   knee      RS02
-11   ankle_a1  RS00             5   ankle_a1  RS00
-12   ankle_a2  RS00             6   ankle_a2  RS00
+오른다리 (can1)                  왼다리 (can0)
+ 7   hip_pitch    RS02          1   hip_pitch    RS02
+ 8   hip_roll     RS02          2   hip_roll     RS02
+ 9   hip_yaw      RS02          3   hip_yaw      RS02
+10   knee         RS02          4   knee         RS02
+11   ankle_a      RS00          5   ankle_a      RS00
+12   ankle_b      RS00          6   ankle_b      RS00
 ```
+
+이름이 곧 축임. **오른손 좌표계, X 가 앞(발이 나가는 방향), Z 가 위, Y 가 왼쪽.**
+
+```
+roll    X축 회전    다리를 옆으로 기울임
+pitch   Y축 회전    다리를 앞뒤로 듦
+yaw     Z축 회전    발끝 방향을 돌림
+```
+
+몸통에서 발로 내려가며 pitch → roll → yaw → knee → 발목 순서임.
 
 `config/robot.yaml` 과 **정확히 같아야 함.** 다르면 응답이 빠지거나, 더 나쁘게는
 엉뚱한 관절이 움직임.
@@ -321,7 +331,7 @@ b·c·d 의 결과는 `config/calibration/right_leg.json` 에 바로 적힘. 붙
 
 오른다리 매핑은 실물에서 확인됨 ([이슈 #8](docs/issues.md)).
 
-    7 hipz   8 hipx   9 hipy   10 knee   11 ankle_a1   12 ankle_a2
+    7 hip_pitch   8 hip_roll   9 hip_yaw   10 knee   11 ankle_a   12 ankle_b
 
 **모터를 교체하거나 CAN id 를 바꾸면 다시 확인할 것.** 틀리면 엉뚱한 관절이
 움직이는데, 프레임은 정상적으로 나가고 응답도 와서 **코드로는 알 수 없음.**
@@ -347,15 +357,15 @@ b·c·d 의 결과는 `config/calibration/right_leg.json` 에 바로 적힘. 붙
 
   입력 [(필수)]: 다리 편 상태, 발바닥 평면 접촉
 
-right_leg 영점: hipz, hipx, hipy, knee, ankle_a1, ankle_a2
+right_leg 영점: hip_pitch, hip_roll, hip_yaw, knee, ankle_a, ankle_b
   자세: "다리 편 상태, 발바닥 평면 접촉"
 
   자세를 잡은 채로 관절마다 Enter.
 
-  hipz       Enter:
-  hipz       잡음
-  hipx       Enter:
-  hipx       잡음
+  hip_pitch  Enter:
+  hip_pitch  잡음
+  hip_roll   Enter:
+  hip_roll   잡음
   ...
 ```
 
@@ -387,7 +397,7 @@ right_leg 영점: hipz, hipx, hipy, knee, ankle_a1, ankle_a2
 **`commission scan`** — 응답하지 않는 모터를 냄.
 
 ```
-응답 없음: ['ankle_a2']
+응답 없음: ['ankle_b']
 ```
 
 **`commission nudge knee`** — 명령한 만큼 안 움직이면 알려줌.
@@ -408,7 +418,7 @@ right_leg 영점: hipz, hipx, hipy, knee, ankle_a1, ankle_a2
        양쪽 끝까지 미세요. 끝나면 Enter.
 
        관절                최소        지금        최대        범위
-       knee          -20.61     30.12     74.76     95.37
+       knee       -20.61     30.12     74.76     95.37
 ```
 
 끝나면 `robot.yaml` 에 붙일 수 있는 형태로 냄. **파일을 고치지는 않음** — 주석이
@@ -457,8 +467,8 @@ huphy-test --limb right_leg range     # 관절마다 최소~최대를 오감
 
 ```
   관절                최소        최대
-  hipz          -112.07    -26.07
-  knee           -15.65     69.79
+  hip_pitch  -112.07    -26.07
+  knee       -15.65     69.79
   ankle_pitch    -35.00     35.00
 ```
 
@@ -504,9 +514,9 @@ huphy-test range --limb right_leg --period 10
 ```
   right_leg -- 무엇을 움직일까요?
 
-    1) hipz       id=7   RS02
+    1) hip_pitch  id=7   RS02
     ...
-    6) ankle_a2   id=12  RS00
+    6) ankle_b    id=12  RS00
 
   선택: 4
 
@@ -575,13 +585,13 @@ huphy-commission --limb right_leg sweep 10             # id 로도 됨
        양쪽 끝까지 미세요. 끝나면 Enter.
 
        관절                최소        지금        최대        범위
-       knee          -20.61     30.12     74.76     95.37
+       knee       -20.61     30.12     74.76     95.37
 ```
 
 **0도를 먼저 받는 이유**: 그 기준으로 최대·최소를 기록하므로 화면에 뜬 값이 곧
 관절 좌표계 각도임. `robot.yaml` 에 그대로 옮기면 됨.
 
-`ankle_a1` 과 `ankle_a2` 는 한 단계로 묶임 — 로드로 발판에 물려 있어 한쪽만 손으로
+`ankle_a` 과 `ankle_b` 는 한 단계로 묶임 — 로드로 발판에 물려 있어 한쪽만 손으로
 돌릴 수 없음. 발을 잡고 움직이면 두 범위가 한 번에 나옴.
 
 끝나면 오프셋은 캘리브레이션 파일에 적고, 한계각은 `robot.yaml` 에 붙일 형태로 냄 —

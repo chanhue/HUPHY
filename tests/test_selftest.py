@@ -14,7 +14,7 @@ from huphy.config import LimbConfig
 from huphy.motors.base import Gains, Motor
 from huphy.scripts import selftest
 
-LIMITS = {"knee": (-20.0, 70.0), "hipz": (-110.0, -20.0)}
+LIMITS = {"knee": (-20.0, 70.0), "hip_pitch": (-110.0, -20.0)}
 
 
 class FakeKinematics:
@@ -38,7 +38,7 @@ class FakeLeg:
                 gains=Gains(kp=1.0, kd=0.1),
             )
             for index, name in enumerate(
-                ("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"), start=7
+                ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b"), start=7
             )
         }
         self.config = LimbConfig(name="right_leg", kind="leg", motors=motors)
@@ -53,12 +53,12 @@ class TestJointLimits:
         """모터와 관절이 1:1 이라 robot.yaml 의 limits_deg 를 그대로 씀."""
         limits = selftest.joint_limits(FakeLeg())
         assert limits["knee"] == (-20.0, 70.0)
-        assert limits["hipz"] == (-110.0, -20.0)
+        assert limits["hip_pitch"] == (-110.0, -20.0)
 
     def test_unmeasured_joints_are_left_out(self):
         """어디까지 가도 되는지 모르는 관절을 흔들 수는 없음."""
         limits = selftest.joint_limits(FakeLeg())
-        assert "hipx" not in limits and "hipy" not in limits
+        assert "hip_roll" not in limits and "hip_yaw" not in limits
 
     def test_ankle_comes_from_the_envelope(self):
         """모터 두 개가 물려 있어 모터 한계를 관절 한계로 옮길 수 없음."""
@@ -67,9 +67,9 @@ class TestJointLimits:
         assert limits["ankle_roll"] == (-25.0, 25.0)
 
     def test_motor_names_never_appear(self):
-        """관절 공간으로 명령함. ankle_a1 은 관절이 아님."""
+        """관절 공간으로 명령함. ankle_a 은 관절이 아님."""
         limits = selftest.joint_limits(FakeLeg())
-        assert "ankle_a1" not in limits and "ankle_a2" not in limits
+        assert "ankle_a" not in limits and "ankle_b" not in limits
 
 
 class TestInset:

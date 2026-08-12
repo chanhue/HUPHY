@@ -62,13 +62,13 @@ class TestRealFile:
         """설정상 매핑임. 실물 확인은 아직 안 됨 (이슈 #8)."""
         right = load_robot(ROBOT_YAML).limb("right_leg")
         assert [right.motors[j].id for j in
-                ("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2")] == [7, 8, 9, 10, 11, 12]
+                ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b")] == [7, 8, 9, 10, 11, 12]
 
     def test_ankle_uses_rs00(self):
         """발목만 RS00 임. 토크 범위가 달라 같은 바이트가 다른 값을 뜻함."""
         right = load_robot(ROBOT_YAML).limb("right_leg")
         assert right.motors["knee"].model == "RS02"
-        assert right.motors["ankle_a1"].model == "RS00"
+        assert right.motors["ankle_a"].model == "RS00"
 
     def test_gains_are_set(self):
         """튜닝 시작값이 들어 있음. 0이면 토크가 아예 안 나가 재볼 수도 없음 (이슈 #9)."""
@@ -244,7 +244,7 @@ class TestValues:
 class TestIdCollision:
     def test_within_a_limb(self, write):
         """한 버스에서 id 가 겹치면 응답이 충돌해 구분되지 않음."""
-        p = write(BASE + "      hipz: {id: 10, model: RS02}\n")
+        p = write(BASE + "      hip_pitch: {id: 10, model: RS02}\n")
         with pytest.raises(ConfigError, match="같은 CAN id"):
             load_robot(p)
 
@@ -272,7 +272,7 @@ class TestIdCollision:
         assert load_robot(p).motor_count == 2
 
     def test_error_names_both_joints(self, write):
-        p = write(BASE + "      hipz: {id: 10, model: RS02}\n")
+        p = write(BASE + "      hip_pitch: {id: 10, model: RS02}\n")
         with pytest.raises(ConfigError, match=r"\[10\]"):
             load_robot(p)
 
@@ -341,9 +341,9 @@ class TestSchema:
         limb = LimbConfig(name="l", kind="leg", motors={
             "knee": Motor(id=10, model="RS02", limits_deg=(-20.0, 70.0),
                           gains=Gains(kp=30.0, kd=1.0)),
-            "hipz": Motor(id=7, model="RS02"),
+            "hip_pitch": Motor(id=7, model="RS02"),
         })
-        assert limb.unconfigured() == ("hipz",)
+        assert limb.unconfigured() == ("hip_pitch",)
         assert limb.is_configured is False
 
     def test_unknown_limb_lists_available(self):

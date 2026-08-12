@@ -70,7 +70,7 @@ def joint_limits(leg: Leg) -> Dict[str, Tuple[float, float]]:
 
     출처가 둘임.
 
-        hipz hipx hipy knee     robot.yaml 의 limits_deg. 모터와 관절이 1:1 임
+        hip_pitch hip_roll hip_yaw knee     robot.yaml 의 limits_deg. 모터와 관절이 1:1 임
         ankle_pitch ankle_roll  AnkleEnvelope. 모터 한계가 아니라 시험 범위임
 
     발목은 모터 두 개가 로드로 물려 있어 **모터 한계를 관절 한계로 옮길 수 없음.**

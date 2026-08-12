@@ -55,12 +55,12 @@ limbs:
     # kp/kd 는 아직 실물에서 튜닝하기 전의 시작값임. 여기서부터 올리거나 내림.
     # 처음 만질 때는 huphy-bringup --gain-scale 0.1 로 더 낮춰 시작할 것 (이슈 #9).
     motors:
-      hipz:     {id: 7,  model: RS02, kp: 20.0, kd: 1.0}
-      hipx:     {id: 8,  model: RS02, kp: 20.0, kd: 1.0}
-      hipy:     {id: 9,  model: RS02, kp: 20.0, kd: 1.0}
-      knee:     {id: 10, model: RS02, kp: 20.0, kd: 1.0}
-      ankle_a1: {id: 11, model: RS00, kp: 20.0, kd: 1.0}
-      ankle_a2: {id: 12, model: RS00, kp: 20.0, kd: 1.0}
+      hip_pitch: {id: 7,  model: RS02, kp: 20.0, kd: 1.0}
+      hip_roll:  {id: 8,  model: RS02, kp: 20.0, kd: 1.0}
+      hip_yaw:   {id: 9,  model: RS02, kp: 20.0, kd: 1.0}
+      knee:      {id: 10, model: RS02, kp: 20.0, kd: 1.0}
+      ankle_a:   {id: 11, model: RS00, kp: 20.0, kd: 1.0}
+      ankle_b:   {id: 12, model: RS00, kp: 20.0, kd: 1.0}
 
   left_leg:
     kind: leg
@@ -77,9 +77,9 @@ limbs:
     # kp/kd 도 비워 둠. 한계를 모르는 관절에 게인만 넣으면 어디까지 가도 되는지
     # 모르는 채로 토크가 나감.
     motors:
-      hipz:     {id: 1, model: RS02}
-      hipx:     {id: 2, model: RS02}
-      hipy:     {id: 3, model: RS02}
-      knee:     {id: 4, model: RS02}
-      ankle_a1: {id: 5, model: RS00}
-      ankle_a2: {id: 6, model: RS00}
+      hip_pitch: {id: 1,  model: RS02}
+      hip_roll:  {id: 2,  model: RS02}
+      hip_yaw:   {id: 3,  model: RS02}
+      knee:      {id: 4,  model: RS02}
+      ankle_a:   {id: 5,  model: RS00}
+      ankle_b:   {id: 6,  model: RS00}

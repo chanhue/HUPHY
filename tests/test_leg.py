@@ -29,12 +29,12 @@ MODELS = {7: T.Model.RS02, 8: T.Model.RS02, 9: T.Model.RS02,
 
 
 LIMITS = {
-    "hipz": (-117.07, -21.07),
-    "hipx": (-5.51, 79.64),
-    "hipy": (-41.90, 31.09),
+    "hip_pitch": (-117.07, -21.07),
+    "hip_roll": (-5.51, 79.64),
+    "hip_yaw": (-41.90, 31.09),
     "knee": (-20.65, 74.79),
-    "ankle_a1": (-79.77, 43.16),
-    "ankle_a2": (-12.50, 126.66),
+    "ankle_a": (-79.77, 43.16),
+    "ankle_b": (-12.50, 126.66),
 }
 """한계각은 캘리브레이션에서 옴. `robot.yaml` 에는 없음 (이슈 #2)."""
 
@@ -42,12 +42,12 @@ LIMITS = {
 def leg_config(**over):
     gains = Gains(kp=30.0, kd=1.0)
     motors = {
-        "hipz": Motor(id=7, model="RS02", gains=gains),
-        "hipx": Motor(id=8, model="RS02", gains=gains),
-        "hipy": Motor(id=9, model="RS02", gains=gains),
+        "hip_pitch": Motor(id=7, model="RS02", gains=gains),
+        "hip_roll": Motor(id=8, model="RS02", gains=gains),
+        "hip_yaw": Motor(id=9, model="RS02", gains=gains),
         "knee": Motor(id=10, model="RS02", gains=gains),
-        "ankle_a1": Motor(id=11, model="RS00", gains=gains),
-        "ankle_a2": Motor(id=12, model="RS00", gains=gains),
+        "ankle_a": Motor(id=11, model="RS00", gains=gains),
+        "ankle_b": Motor(id=12, model="RS00", gains=gains),
     }
     motors.update(over.pop("motors", {}))
     return LimbConfig(name="right_leg", kind="leg", side="right", channel="can1",
@@ -152,13 +152,13 @@ def raw(leg):
 class TestConstruction:
     def test_joint_names(self, leg):
         """명령은 관절로 받음. 발목은 pitch/roll 이지 a1/a2 가 아님."""
-        assert leg.joint_names == ("hipz", "hipx", "hipy", "knee",
+        assert leg.joint_names == ("hip_pitch", "hip_roll", "hip_yaw", "knee",
                                    "ankle_pitch", "ankle_roll")
 
     def test_motor_names_differ_from_joints(self, leg):
         """설정에는 모터가 a1/a2 로 있음. 사람이 다루는 것은 관절임."""
-        assert "ankle_a1" in leg.motor_names
-        assert "ankle_a1" not in leg.joint_names
+        assert "ankle_a" in leg.motor_names
+        assert "ankle_a" not in leg.joint_names
 
     def test_missing_motor_is_rejected(self, fake_can):
         """다리에 필요한 모터가 빠지면 만들 수 없음."""
@@ -174,7 +174,7 @@ class TestConstruction:
     def test_observation_features_are_motors(self, leg):
         """관찰은 모터 단위임. 실제로 측정되는 것이 그것이기 때문임."""
         assert "knee.pos" in leg.observation_features
-        assert "ankle_a1.pos" in leg.observation_features
+        assert "ankle_a.pos" in leg.observation_features
         assert "ankle_pitch" not in leg.observation_features
 
     def test_features_are_known_before_running(self, leg):
@@ -284,8 +284,8 @@ class TestAnkle:
     def test_motor_angles_stay_in_the_observation(self, leg):
         """발목각이 늘어난 것이지 모터각이 빠진 것이 아님. 브링업이 그것을 씀."""
         observation = leg.get_observation()
-        assert "ankle_a1.pos" in observation
-        assert "ankle_a2.pos" in observation
+        assert "ankle_a.pos" in observation
+        assert "ankle_b.pos" in observation
 
     def test_the_pose_is_solved_once_per_cycle(self, leg, monkeypatch):
         """`get_observation()` 이 한 주기에 여러 번 불림. 부를 때마다 풀면 안 됨."""
@@ -366,7 +366,7 @@ class TestSafety:
         bus = RobStrideBus(CanBus(cfg.channel), cfg.motors_by_id())
         leg = Leg(cfg, bus, calibration=identity(cfg.motors), allow_uncalibrated=True)
         bus.connect()                     # refresh_states 를 안 부름
-        commands = leg.build_commands({"knee": 30.0, "hipz": -50.0})
+        commands = leg.build_commands({"knee": 30.0, "hip_pitch": -50.0})
         assert commands == {}
         assert leg.counters.rejects["nostate"] == 2
 
@@ -397,7 +397,7 @@ class TestPipeline:
         assert raw.sent == []
 
     def test_send_writes_frames(self, leg, raw):
-        commands = leg.build_commands({"knee": 30.0, "hipz": -50.0})
+        commands = leg.build_commands({"knee": 30.0, "hip_pitch": -50.0})
         assert leg.send(commands) == 2
         assert sorted(m.arbitration_id for m in raw.sent) == [7, 10]
 
@@ -517,7 +517,7 @@ class TestLinkStatus:
     def test_ack_is_minus_one_when_not_commanded(self, leg):
         """명령하지 않은 모터를 1로 내면 거짓말이 되고 0으로 내면 없는 고장이 보임."""
         leg.send_action({"knee": 10.0})
-        assert leg.link_status()["hipz"]["ack"] == -1.0
+        assert leg.link_status()["hip_pitch"]["ack"] == -1.0
 
     def test_silent_motor_is_counted(self, fake_can):
         """MIT 모드는 명령을 받으면 반드시 답함. 안 오면 처리하지 않은 것임."""
@@ -533,14 +533,14 @@ class TestLinkStatus:
         FakeBus.send = deaf
         try:
             for _ in range(3):
-                leg.send_action({"knee": 10.0, "hipz": -50.0})
+                leg.send_action({"knee": 10.0, "hip_pitch": -50.0})
         finally:
             FakeBus.send = original
 
         status = leg.link_status()
         assert status["knee"]["ack"] == 0.0
         assert status["knee"]["miss"] == 3
-        assert status["hipz"]["ack"] == 1.0
+        assert status["hip_pitch"]["ack"] == 1.0
 
     def test_age_is_the_reliable_signal(self, fake_can):
         """응답이 한 번도 없던 모터는 위치를 몰라 가드가 명령을 거부함.
@@ -593,7 +593,7 @@ class TestAnkleOutputMode:
 
     def test_position_mode_sends_angles(self, leg):
         commands = leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
-        for motor in ("ankle_a1", "ankle_a2"):
+        for motor in ("ankle_a", "ankle_b"):
             command = commands[leg.config.motors[motor].id]
             assert command.kp > 0.0
             assert command.torque_nm == 0.0
@@ -601,7 +601,7 @@ class TestAnkleOutputMode:
     def test_torque_mode_sends_torque(self, fake_can):
         torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
         commands = torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
-        for motor in ("ankle_a1", "ankle_a2"):
+        for motor in ("ankle_a", "ankle_b"):
             command = commands[torque_leg.config.motors[motor].id]
             assert command.kp == 0.0
             assert command.kd == 0.0
@@ -623,7 +623,7 @@ class TestAnkleOutputMode:
         commands = torque_leg.build_commands(
             {"ankle_pitch": pose[0], "ankle_roll": pose[1]}
         )
-        for motor in ("ankle_a1", "ankle_a2"):
+        for motor in ("ankle_a", "ankle_b"):
             command = commands[torque_leg.config.motors[motor].id]
             assert command.torque_nm == pytest.approx(0.0, abs=1e-9)
 
@@ -631,7 +631,7 @@ class TestAnkleOutputMode:
         torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
         small = torque_leg.build_commands({"ankle_pitch": 1.0, "ankle_roll": 0.0})
         big = torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 0.0})
-        a1 = torque_leg.config.motors["ankle_a1"].id
+        a1 = torque_leg.config.motors["ankle_a"].id
         assert abs(big[a1].torque_nm) > abs(small[a1].torque_nm)
 
     def test_torque_mode_skips_the_ik(self, fake_can, monkeypatch):
@@ -656,7 +656,7 @@ class TestAnkleOutputMode:
         FakeBus.position[12] = -170.0
         torque_leg.refresh()
         commands = torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
-        assert torque_leg.config.motors["ankle_a1"].id not in commands
+        assert torque_leg.config.motors["ankle_a"].id not in commands
         assert torque_leg.counters.rejects["ankle_nopose"] == 1
 
 
@@ -691,12 +691,12 @@ class TestAnkleVelocity:
         """모터가 보고한 tau 와 짝임. 시킨 만큼 못 낸 것인지 봐야 함."""
         torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
         commands = torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
-        a1 = torque_leg.config.motors["ankle_a1"].id
-        assert torque_leg.last_torque["ankle_a1"] == commands[a1].torque_nm
+        a1 = torque_leg.config.motors["ankle_a"].id
+        assert torque_leg.last_torque["ankle_a"] == commands[a1].torque_nm
 
     def test_position_mode_records_zero(self, leg):
         leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
-        assert leg.last_torque == {"ankle_a1": 0.0, "ankle_a2": 0.0}
+        assert leg.last_torque == {"ankle_a": 0.0, "ankle_b": 0.0}
 
     def test_a_dropped_command_records_zero(self, fake_can):
         """안 보냈으면 0임. 직전 값이 남으면 계속 보낸 것처럼 보임."""
@@ -706,4 +706,4 @@ class TestAnkleVelocity:
         FakeBus.position[12] = -170.0
         torque_leg.refresh()
         torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
-        assert torque_leg.last_torque == {"ankle_a1": 0.0, "ankle_a2": 0.0}
+        assert torque_leg.last_torque == {"ankle_a": 0.0, "ankle_b": 0.0}

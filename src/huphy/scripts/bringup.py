@@ -388,7 +388,7 @@ def hold_pose(leg: Leg, loop: ControlLoop) -> None:
     여기서 처지면 `kp` 가 부족하고, 떨리면 `kp` 가 과함. 여기서 떨리면 어떤 동작을
     시켜도 떨림.
 
-    **발목은 여기서 FK 로 채움.** 관찰은 모터 단위(`ankle_a1`, `ankle_a2`)로만
+    **발목은 여기서 FK 로 채움.** 관찰은 모터 단위(`ankle_a`, `ankle_b`)로만
     나오고 액션은 관절 단위(`ankle_pitch`, `ankle_roll`)로 받으므로, 지금 자세를
     목표로 삼으려면 한 번 풀어야 함. FK 는 뉴턴 반복이라 여기서 한 번만 부름 --
     IK 는 닫힌 해라 매 주기 돌아도 됨.

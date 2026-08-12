@@ -272,7 +272,7 @@ motions.step("knee", start=0.0, end=30.0, at_s=1.0)
 ### 한 관절씩
 
 ```python
-motions.step("knee", start=0.0, end=30.0, hold_others={"hipz": -50.0})
+motions.step("knee", start=0.0, end=30.0, hold_others={"hip_pitch": -50.0})
 ```
 
 나머지는 붙잡아 둠. 여럿을 같이 흔들면 **어느 관절이 원인인지 섞임.**

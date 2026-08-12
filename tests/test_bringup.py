@@ -34,32 +34,32 @@ limbs:
     control_hz: 200.0
     calibration: calibration/right_leg.json
     motors:
-      hipz:     {id: 7,  model: RS02, kp: 30.0, kd: 1.0}
-      hipx:     {id: 8,  model: RS02, kp: 30.0, kd: 1.0}
-      hipy:     {id: 9,  model: RS02, kp: 30.0, kd: 1.0}
+      hip_pitch:     {id: 7,  model: RS02, kp: 30.0, kd: 1.0}
+      hip_roll:     {id: 8,  model: RS02, kp: 30.0, kd: 1.0}
+      hip_yaw:     {id: 9,  model: RS02, kp: 30.0, kd: 1.0}
       knee:     {id: 10, model: RS02, kp: 30.0, kd: 1.0}
-      ankle_a1: {id: 11, model: RS00, kp: 30.0, kd: 1.0}
-      ankle_a2: {id: 12, model: RS00, kp: 30.0, kd: 1.0}
+      ankle_a: {id: 11, model: RS00, kp: 30.0, kd: 1.0}
+      ankle_b: {id: 12, model: RS00, kp: 30.0, kd: 1.0}
   left_leg:
     kind: leg
     side: left
     channel: can0
     motors:
-      hipz:     {id: 1, model: RS02}
-      hipx:     {id: 2, model: RS02}
-      hipy:     {id: 3, model: RS02}
+      hip_pitch:     {id: 1, model: RS02}
+      hip_roll:     {id: 2, model: RS02}
+      hip_yaw:     {id: 3, model: RS02}
       knee:     {id: 4, model: RS02}
-      ankle_a1: {id: 5, model: RS00}
-      ankle_a2: {id: 6, model: RS00}
+      ankle_a: {id: 5, model: RS00}
+      ankle_b: {id: 6, model: RS00}
 """
 
 LIMITS = {
-    "hipz": [-117.07, -21.07],
-    "hipx": [-5.51, 79.64],
-    "hipy": [-41.90, 31.09],
+    "hip_pitch": [-117.07, -21.07],
+    "hip_roll": [-5.51, 79.64],
+    "hip_yaw": [-41.90, 31.09],
     "knee": [-20.65, 74.79],
-    "ankle_a1": [-79.77, 43.16],
-    "ankle_a2": [-12.50, 126.66],
+    "ankle_a": [-79.77, 43.16],
+    "ankle_b": [-12.50, 126.66],
 }
 """한계각은 캘리브레이션에서 옴. `robot.yaml` 에는 없음 (이슈 #2)."""
 
@@ -127,7 +127,7 @@ class FakeBus:
 def fake_can(monkeypatch):
     FakeBus.instances = []
     FakeBus.position = {i: 0.0 for i in MODELS}
-    FakeBus.position[7] = -60.0        # hipz 는 한계 안
+    FakeBus.position[7] = -60.0        # hip_pitch 는 한계 안
     mod = types.ModuleType("can")
     mod.Message = FakeMessage
     mod.interface = types.SimpleNamespace(Bus=FakeBus)
@@ -167,7 +167,7 @@ class TestBuildLeg:
         robot = load_robot(cfg)
         leg = bringup.build_leg(robot, robot.limb("right_leg"), gain_scale=0.1)
         assert leg.config.motors["knee"].gains.kp == pytest.approx(3.0)
-        assert leg.config.motors["ankle_a1"].gains.kd == pytest.approx(0.1)
+        assert leg.config.motors["ankle_a"].gains.kd == pytest.approx(0.1)
 
     def test_left_leg_gets_mirrored_kinematics(self, fake_can, cfg):
         """같은 관절 명령에 양다리가 같은 물리 동작을 하려면 필요함."""
@@ -251,7 +251,7 @@ class TestGoesThroughTheLoop:
 class TestShowState:
     def test_shows_every_motor(self, menu):
         _, out = menu(["1", "q"])
-        for name in ("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2"):
+        for name in ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b"):
             assert name in out
 
     def test_shows_both_spaces(self, menu):
@@ -338,7 +338,7 @@ class TestTorqueGate:
 class TestHoldPose:
     """자세 유지는 관절 여섯 개를 **전부** 명령해야 함.
 
-    발목은 관찰에 모터(`ankle_a1`, `ankle_a2`)로만 나오고 액션은 관절
+    발목은 관찰에 모터(`ankle_a`, `ankle_b`)로만 나오고 액션은 관절
     (`ankle_pitch`, `ankle_roll`)로 받음. 지금 자세를 목표로 삼으려면 FK 를 한 번
     거쳐야 하는데, 이걸 빠뜨리면 액션이 통째로 비어 **토크만 켜진 채 명령이 한 개도
     안 나감.** 그때 모터는 자기 내부 목표를 붙잡으므로 다리가 그쪽으로 움직임.
@@ -373,7 +373,7 @@ class TestHoldPose:
     def test_the_target_is_where_the_leg_is(self, commanded):
         """지금 자세를 잡아야 함. 0을 목표로 잡으면 토크가 들어가는 순간 튐."""
         actions, _ = commanded
-        assert actions[0]["hipz"] == pytest.approx(-60.0, abs=0.5)
+        assert actions[0]["hip_pitch"] == pytest.approx(-60.0, abs=0.5)
 
     def test_the_target_does_not_move(self, commanded):
         """목표가 다리를 따라다니면 오차가 늘 0이라 복원력이 안 생김."""

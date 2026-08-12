@@ -19,7 +19,7 @@ from huphy.motors.base import Motor, MotorCalibration
 REPO = Path(__file__).resolve().parent.parent
 ROBOT_YAML = REPO / "config" / "robot.yaml"
 
-JOINTS = ("hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2")
+JOINTS = ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b")
 
 
 def payload(motors=None, **over):
@@ -169,7 +169,7 @@ class TestSave:
         original = {
             "knee": MotorCalibration(motor_id=10, sign=-1.0, offset_deg=12.0,
                                      zero_reference="다리 편 상태"),
-            "hipz": MotorCalibration(motor_id=7, sign=1.0, offset_deg=-3.5),
+            "hip_pitch": MotorCalibration(motor_id=7, sign=1.0, offset_deg=-3.5),
         }
         cal.save(p, original, limb="right_leg", note="테스트")
         back = cal.load(p)
@@ -177,7 +177,7 @@ class TestSave:
         assert back["knee"].sign == -1.0
         assert back["knee"].offset_deg == 12.0
         assert back["knee"].zero_reference == "다리 편 상태"
-        assert back["hipz"].offset_deg == -3.5
+        assert back["hip_pitch"].offset_deg == -3.5
 
     def test_motor_id_is_not_stored(self, tmp_path):
         """robot.yaml 이 가진 값임. 두 군데 있으면 어긋날 수 있음."""
@@ -236,7 +236,7 @@ class TestSave:
 class TestAttach:
     MOTORS = {
         "knee": Motor(id=10, model="RS02"),
-        "hipz": Motor(id=7, model="RS02"),
+        "hip_pitch": Motor(id=7, model="RS02"),
     }
 
     def test_rekeys_by_motor_id(self):
@@ -253,7 +253,7 @@ class TestAttach:
     def test_carries_measured_values(self):
         c = {"knee": MotorCalibration(motor_id=-1, sign=-1.0, offset_deg=12.0,
                                       zero_reference="편 상태"),
-             "hipz": MotorCalibration(motor_id=-1)}
+             "hip_pitch": MotorCalibration(motor_id=-1)}
         got = cal.attach(c, self.MOTORS)
         assert got[10].sign == -1.0
         assert got[10].offset_deg == 12.0
@@ -264,13 +264,13 @@ class TestAttach:
 
         sign 이 반대인 관절이 그렇게 되면 목표에서 멀어지는 방향으로 토크가 걸림.
         """
-        with pytest.raises(CalibrationError, match=r"캘리브레이션에 없는 관절 \['hipz'\]"):
+        with pytest.raises(CalibrationError, match=r"캘리브레이션에 없는 관절 \['hip_pitch'\]"):
             cal.attach({"knee": MotorCalibration(motor_id=-1)}, self.MOTORS)
 
     def test_extra_joint_is_an_error(self):
         """설정에 없는 관절이 있으면 이름이 바뀌었거나 파일이 다른 다리 것임."""
-        c = cal.identity(list(self.MOTORS) + ["ankle_a1"])
-        with pytest.raises(CalibrationError, match=r"설정에 없는 관절 \['ankle_a1'\]"):
+        c = cal.identity(list(self.MOTORS) + ["ankle_a"])
+        with pytest.raises(CalibrationError, match=r"설정에 없는 관절 \['ankle_a'\]"):
             cal.attach(c, self.MOTORS)
 
     def test_real_files_attach(self):

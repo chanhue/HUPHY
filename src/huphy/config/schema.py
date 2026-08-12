@@ -163,7 +163,7 @@ class LimbConfig:
     motors: Dict[str, Motor] = field(default_factory=dict)
     """관절 이름 -> 모터. 이름은 이 팔다리 안에서만 유일하면 됨.
 
-    `hipz`, `knee` 처럼 짧게 씀. 어느 다리인지는 `LimbConfig.name` 이 이미 말함.
+    `hip_pitch`, `knee` 처럼 짧게 씀. 어느 다리인지는 `LimbConfig.name` 이 이미 말함.
     """
 
     calibration_path: Optional[Path] = None
