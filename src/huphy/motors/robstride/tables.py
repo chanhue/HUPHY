@@ -77,19 +77,25 @@ class EncodingRange:
 
 # MIT 프로토콜 (11-bit 표준 프레임) — 본 프로젝트가 사용
 #
-#   매뉴얼 p.38 Command 3 "MIT Dynamic Parameters":
+#   매뉴얼 Command 3 "MIT Dynamic Parameters" (RS02 는 p.38):
 #     Byte0~1               목표각    [0~65535] <-> (-12.57 rad ~ 12.57 rad)
 #     Byte2 + Byte3[7:4]    목표속도  [0~4096]  <-> (-33 rad/s ~ 33 rad/s)
 #     Byte3[3:0] + Byte4    Kp        [0~4096]  <-> (0 ~ 500)
 #     Byte5 + Byte6[7:4]    Kd        [0~4096]  <-> (0 ~ 5)
-#     Byte6[3:0] + Byte7    목표토크  [0~4096]  <-> (-17 N.m ~ 17 N.m)
+#     Byte6[3:0] + Byte7    목표토크  [0~4096]  <-> 모델마다 다름 (아래 표)
 MIT_ENCODING: Dict[Model, EncodingRange] = {
-    # TODO: verify — RS00 MIT 표는 직접 확인하지 못했음. RS02 매뉴얼 p.26의
-    # 파라미터 목록(RS00에서 복사된 것으로 보임)을 근거로 (33, 14)로 둠.
-    # RS00 매뉴얼로 교차 확인할 것.
+    # 두 모델 다 각 매뉴얼의 Command 3 표로 확인함. 토크 범위만 다름.
+    #   RS00  목표토크 [0~4096] <-> (-14 N.m ~ 14 N.m)
+    #   RS02  목표토크 [0~4096] <-> (-17 N.m ~ 17 N.m)
+    # 나머지 네 칸(각도·속도·Kp·Kd)은 두 모델이 같음.
     Model.RS00: EncodingRange(pmax_rad=12.57, vmax_rad_s=33.0, tmax_nm=14.0),
     Model.RS02: EncodingRange(pmax_rad=12.57, vmax_rad_s=33.0, tmax_nm=17.0),
 }
+"""**모델마다 다름.** 같은 정수를 서로 다른 Nm 으로 되돌리므로, 표가 틀리면 그
+비율만큼 토크가 어긋남 -- 프레임에는 Nm 이 아니라 범위 안의 눈금만 실림.
+
+발목이 RS00, 나머지가 RS02 라 한 다리 안에서도 갈림.
+"""
 
 # private 프로토콜 (29-bit 확장 프레임)
 #
