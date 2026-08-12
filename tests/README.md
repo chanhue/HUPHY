@@ -18,6 +18,7 @@ tests/
 ├── test_control.py         control/                    45개
 ├── test_policy.py          control/policy.py           30개
 ├── test_rsl_rl.py          control/rsl_rl.py           24개
+├── test_run.py             scripts/run.py              17개
 ├── test_bringup.py         scripts/bringup.py          36개
 └── test_selftest.py        scripts/selftest.py         27개
 ```
@@ -31,7 +32,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-884 passed in 14.0s
+901 passed in 16.6s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -274,6 +275,17 @@ UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬
 | `TestWithPolicy` | 1 | 읽은 것을 Motion 에 그대로 |
 
 `config/policies/` 의 **진짜 가중치 파일**을 읽음. torch 없이 돌아감.
+
+### `test_run.py` — 17개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestRefusals` | 4 | 모르는 정책, 없는 파일, 규격 불일치, IMU 없음 |
+| `TestRun` | 6 | 실행, 발목이 토크로, 학습 게인 |
+| `TestStaged` | 5 | **바로 정책으로 뛰지 않음** |
+| `TestEnterWatcher` | 2 | 화면이면 기다리고 아니면 바로 |
+
+가짜 모터·IMU 에 명령줄을 그대로 돌리고, `config/policies/` 의 진짜 가중치를 읽음.
 
 ### `test_bringup.py` — 36개
 

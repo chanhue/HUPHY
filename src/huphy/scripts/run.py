@@ -1,0 +1,308 @@
+"""정책 실행 — 학습한 모델로 다리를 움직임.
+
+    huphy-run --limb right_leg --policy balance
+
+브링업과 **같은 다리·같은 루프**를 씀. 다르게 들어가는 것은 매 주기 관절 목표를
+내는 것 하나뿐임 -- 브링업은 사인파 같은 것을 넣고, 여기는 모델을 넣음.
+
+
+## 정책 이름이 규격을 고름
+
+`.pt` 파일에는 신경망만 들어 있고, 모델 출력을 관절 각도로 바꿀 때 곱하는 값
+(`action_scale`)이나 뛰는 위상이 관찰에 붙는지는 안 들어 있음. 그건 학습 설정에만
+있어서 `control/policy.py` 에 적어 두었고, 이름으로 고름.
+
+    balance   입력 24, x0.25
+    hopping   입력 26, x0.5, 위상 2칸
+
+파일의 입력 개수가 그 값과 다르면 **모터를 켜기 전에** 멈춤.
+
+
+## 게인이 설정 파일 값이 아님
+
+`robot.yaml` 의 `kp`/`kd` 는 사람이 브링업에서 튜닝하는 값임. 정책은 **학습에 쓴
+게인**으로 돌아야 함 -- 시뮬에서 그 값으로 움직이는 것을 보고 배웠기 때문임.
+
+    kp = 20.0,  kd = 0.502     mjlab 의 half_huphy.xml
+
+발목은 모터가 아니라 **관절**에 이 게인을 걺. 모터 두 개가 로드로 두 축을 같이
+만들어서 지렛대 비가 자세마다 달라지므로, 관절 토크를 만들어 야코비안으로 내림.
+
+
+## 아직 없는 것
+
+    상태 기계        지금은 정책 하나만 돎. 넘어져도 안 멈춤
+    토크 가드        발목 토크에는 한계 검사가 안 걸림
+    torch 대조       numpy 로 다시 짠 계산을 학습 쪽과 맞춰 보지 않았음
+
+`control/POLICY.md` 에 정리해 둠. **사람이 옆에서 지켜보며 돌릴 것.**
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import signal
+import sys
+import threading
+from pathlib import Path
+from typing import Optional
+
+from ..config import ConfigError, LimbConfig, load_robot
+from ..control import ControlLoop, Mode, policy, rsl_rl
+from ..motors.base import Gains
+from .bringup import build_leg
+from .commission import CONFIG_NAME, _find_config, _pick_limb
+from .selftest import approach
+
+logger = logging.getLogger("huphy.run")
+
+SPECS = {
+    "balance": policy.BALANCE,
+    "hopping": policy.HOPPING,
+}
+"""이름 -> 규격. `control/policy.py` 에 적힌 것을 고름."""
+
+WEIGHTS_DIR = Path("config/policies")
+"""이름으로 찾을 때 보는 곳. `--weights` 로 덮어쓸 수 있음."""
+
+POLICY_HZ = 50.0
+"""제어 주기. 시뮬이 0.005초 x 4 = 50Hz 로 학습했으므로 같아야 함.
+
+더 빠르게 돌리면 모델이 학습 때보다 자주 불려서, 같은 행동이 더 오래 유지되는 것과
+같은 효과가 남 -- 시뮬과 다르게 움직임.
+"""
+
+POLICY_KP = 20.0
+POLICY_KD = 0.502
+"""학습에 쓴 게인. mjlab 의 `half_huphy.xml` 액추에이터 값임.
+
+    <position kp="20.0" kv="0.502" .../>
+"""
+
+
+ZERO_POSE = {joint: 0.0 for joint in policy.JOINT_ORDER}
+"""정책이 기대하는 시작 자세. 시뮬의 기준 자세가 관절 전부 0 임.
+
+관찰의 관절 각도가 이 자세 기준의 상대값이라, 여기서 시작하지 않으면 정책이 학습 때
+본 적 없는 입력을 받음.
+"""
+
+DEFAULT_APPROACH_S = 3.0
+"""영점 자세까지 옮기는 데 쓰는 시간.
+
+**서서히 가야 함.** 토크를 넣는 순간 목표가 멀리 있으면 관절이 튐 -- 점프 가드가
+자르기는 하지만 그 전에 큰 토크가 한 번 나감.
+"""
+
+
+def staged(approach_motion, approach_s: float, policy_motion):
+    """영점으로 옮김 -> 그 자세로 기다림 -> Enter 누르면 정책.
+
+    셋을 한 덩어리로 묶어 제어 루프에 넘김. 루프는 이 안에 단계가 있는 줄 모름.
+
+    **정책은 자기 구간의 0초부터** 시간을 받음. 뛰는 위상이 시작한 순간부터 세야
+    하기 때문임.
+
+    `start()` 를 부르기 전까지는 영점 자세를 계속 보냄 -- 사람이 로봇에서 손을 떼고
+    자리를 잡을 시간임.
+    """
+    started = [False, 0.0]
+
+    def motion(t: float, observation):
+        if t < approach_s:
+            return approach_motion(t, observation)
+        if not started[0]:
+            return dict(ZERO_POSE)
+        if started[1] == 0.0:
+            started[1] = t
+        return policy_motion(t - started[1], observation)
+
+    def start() -> None:
+        started[0] = True
+
+    motion.start = start          # type: ignore[attr-defined]
+    motion.is_started = lambda: started[0]      # type: ignore[attr-defined]
+    return motion
+
+
+class EnterWatcher:
+    """Enter 를 기다렸다가 정책을 시작시킴.
+
+    **별도 스레드에서 봄.** 제어 루프는 주기를 지켜야 해서 입력을 기다릴 틈이 없음.
+
+    화면이 아니면(파이프, 서비스) 바로 시작함 -- 누를 사람이 없는데 영원히 기다리면
+    안 됨.
+    """
+
+    def __init__(self, motion) -> None:
+        self.motion = motion
+        self.armed = sys.stdin.isatty()
+        self._thread: Optional[threading.Thread] = None
+
+    def __enter__(self) -> "EnterWatcher":
+        if not self.armed:
+            self.motion.start()
+            return self
+        self._thread = threading.Thread(target=self._wait, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def _wait(self) -> None:
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            return
+        print("  시작함")
+        self.motion.start()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="huphy-run",
+        description="학습한 정책으로 다리를 움직임.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "예시:\n"
+            "  --limb right_leg --policy balance\n"
+            "  --limb right_leg --policy hopping --weights runs/model_49999.pt\n\n"
+            "상태 기계와 토크 가드가 아직 없음. 사람이 지켜보며 돌릴 것.\n"
+        ),
+    )
+    p.add_argument("--config", type=Path, help=f"기본값: 위로 올라가며 {CONFIG_NAME} 을 찾음")
+    p.add_argument("--limb", help="팔다리 이름. 하나뿐이면 생략 가능")
+    p.add_argument(
+        "--policy", required=True, choices=sorted(SPECS),
+        help="어느 정책인지. 관찰 개수와 action_scale 이 여기서 정해짐",
+    )
+    p.add_argument(
+        "--weights", type=Path,
+        help=f"가중치 파일. 기본값은 {WEIGHTS_DIR}/<정책이름>.pt",
+    )
+    p.add_argument(
+        "--hz", type=float, default=POLICY_HZ,
+        help=f"제어 주기. 기본 {POLICY_HZ:.0f} (학습 주기와 같아야 함)",
+    )
+    p.add_argument(
+        "--approach", type=float, default=DEFAULT_APPROACH_S,
+        help=f"영점 자세까지 옮기는 시간. 기본 {DEFAULT_APPROACH_S:.0f}초",
+    )
+    p.add_argument(
+        "--duration", type=float,
+        help="이 초만큼만 돌고 나옴. 생략하면 Ctrl-C 까지",
+    )
+    p.add_argument(
+        "--allow-uncalibrated", action="store_true",
+        help="실측 전에도 토크를 넣음",
+    )
+    p.add_argument("-v", "--verbose", action="store_true")
+    return p
+
+
+def _weights_path(args) -> Path:
+    """쓸 가중치 파일. 없으면 멈춤."""
+    path = args.weights if args.weights else WEIGHTS_DIR / f"{args.policy}.pt"
+    if not path.is_file():
+        raise SystemExit(
+            f"가중치 파일이 없음: {path}\n"
+            f"--weights 로 경로를 지정하거나 {WEIGHTS_DIR} 에 넣을 것"
+        )
+    return path
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s %(message)s",
+    )
+
+    path = args.config or _find_config()
+    if path is None:
+        raise SystemExit(
+            f"{CONFIG_NAME} 을 찾지 못했음. 저장소 안에서 실행하거나 --config 로 지정할 것"
+        )
+    try:
+        robot = load_robot(path)
+    except ConfigError as e:
+        raise SystemExit(f"{e}") from e
+
+    limb: LimbConfig = _pick_limb(robot, args.limb)
+    spec = SPECS[args.policy]
+
+    # 모터를 켜기 전에 읽음. 규격이 어긋나면 여기서 멈추는 것이 안전함.
+    weights = _weights_path(args)
+    try:
+        model = rsl_rl.load(weights, spec=spec)
+    except (ValueError, OSError) as e:
+        raise SystemExit(f"{e}") from e
+
+    leg = build_leg(
+        robot, limb,
+        allow_uncalibrated=args.allow_uncalibrated,
+        gains=Gains(kp=POLICY_KP, kd=POLICY_KD),
+        ankle_output="torque",
+        ankle_kp=(POLICY_KP, POLICY_KP),
+        ankle_kd=(POLICY_KD, POLICY_KD),
+    )
+
+    if not leg.imus:
+        raise SystemExit(
+            f"{limb.name} 에 IMU 가 없음. 정책 입력의 6칸이 IMU 값임 "
+            f"(각속도 3, 중력 방향 3).\n"
+            f"robot.yaml 의 imus 에 mount: {limb.name} 로 적을 것"
+        )
+
+    try:
+        leg.connect()
+    except ImportError as e:
+        raise SystemExit(f"{e}") from e
+    except ConnectionError as e:
+        raise SystemExit(
+            f"{e}\n채널이 올라와 있는지 확인할 것:\n"
+            f"  sudo ip link set {limb.channel} up type can bitrate 1000000"
+        ) from e
+
+    loop = ControlLoop(leg, hz=args.hz, mode=Mode.CONTROL)
+    signal.signal(signal.SIGINT, lambda *_: loop.stop())
+
+    print(
+        f"\n  {limb.name}  {limb.channel}  {args.hz:.0f}Hz\n"
+        f"  정책     {args.policy}  (입력 {spec.obs_dim}, x{spec.action_scale})\n"
+        f"  가중치   {weights}\n"
+        f"  게인     kp={POLICY_KP} kd={POLICY_KD}  발목은 토크\n"
+        f"  IMU      {', '.join(i.name for i in leg.imus)}\n\n"
+        f"  {args.approach:.0f}초에 걸쳐 영점 자세로 옮긴 뒤 그 자세로 기다립니다.\n"
+        f"  Enter 를 누르면 정책이 시작됩니다.\n\n"
+        f"  ** 상태 기계와 토크 가드가 없음. 넘어져도 멈추지 않음 **\n"
+        f"  Ctrl-C 로 멈춤. 멈출 때 자세를 붙잡은 뒤 토크를 끊음.\n"
+    )
+
+    start_pose = {
+        joint: float(leg.get_observation().get(f"{joint}.pos", 0.0))
+        for joint in policy.JOINT_ORDER
+    }
+    motion = staged(
+        approach(ZERO_POSE, start_pose, args.approach),
+        args.approach,
+        policy.policy_motion(model, leg.imus[0], spec=spec),
+    )
+
+    try:
+        with EnterWatcher(motion):
+            stats = loop.run(motion, duration_s=args.duration)
+        print(f"\n  {stats.summary()}")
+        if not stats.kept_up:
+            print("  주기를 못 지킴. 정책이 시뮬과 다르게 움직임")
+            return 1
+    finally:
+        leg.disconnect()
+        print("\n  종료. 토크가 끊겼음")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

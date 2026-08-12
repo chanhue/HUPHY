@@ -73,15 +73,36 @@ def build_leg(
     *,
     gain_scale: float = 1.0,
     allow_uncalibrated: bool = False,
+    gains: Optional[Gains] = None,
+    ankle_output: str = "position",
+    ankle_kp: Tuple[float, float] = (0.0, 0.0),
+    ankle_kd: Tuple[float, float] = (0.0, 0.0),
 ) -> Leg:
     """설정에서 다리 하나를 만듦.
 
     `gain_scale` 로 게인을 낮춰 시작할 수 있음. 튜닝값을 찾은 뒤에도 처음엔 낮게
     시작하는 것이 안전함.
 
+    `gains` 를 주면 **설정의 게인 대신 그 값을 모든 모터에 씀.** 정책을 돌릴 때
+    학습에 쓴 게인을 그대로 써야 하는데, 그 값은 `robot.yaml` 이 아니라 학습 설정에
+    있기 때문임.
+
+    `ankle_output` 이 `"torque"` 면 발목 두 모터에 각도 대신 토크가 나감. 시뮬은
+    발목 두 축이 독립 관절이고 각자 서보가 붙어 있는데, 실물은 모터 두 개가 로드로
+    둘을 같이 만들어서 관절 게인을 모터에 그대로 걸 수 없음.
+
     발목 기구학은 **왼쪽이면 거울상**을 씀. 같은 관절 명령에 양다리가 같은 물리
     동작을 하려면 필요함 (이슈 #13 -- 거울상은 실측이 아니라 가정임).
     """
+    if gains is not None:
+        limb = replace(
+            limb,
+            motors={
+                name: replace(motor, gains=gains)
+                for name, motor in limb.motors.items()
+            },
+        )
+
     if gain_scale != 1.0:
         limb = replace(
             limb,
@@ -105,6 +126,9 @@ def build_leg(
         kinematics=AnkleKinematics(geometry),
         allow_uncalibrated=allow_uncalibrated,
         imus=_imus_on(robot, limb),
+        ankle_output=ankle_output,
+        ankle_kp=ankle_kp,
+        ankle_kd=ankle_kd,
     )
 
 

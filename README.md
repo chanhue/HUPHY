@@ -171,7 +171,7 @@ pip install -e ".[imu]"     # + pyserial. IMU 를 붙일 때만
 ### 확인
 
 ```bash
-python -m pytest tests -q          # 884 passed
+python -m pytest tests -q          # 901 passed
 huphy-commission --help
 ```
 
@@ -781,7 +781,8 @@ scripts/          터미널 진입점
    │
    ├─ commission.py   조립할 때 한 번 하는 조작
    ├─ bringup.py      하나씩 골라 움직여 보는 메뉴
-   └─ selftest.py     정해진 패턴을 Ctrl-Q 까지
+   ├─ selftest.py     정해진 패턴을 Ctrl-Q 까지
+   └─ run.py          학습한 정책으로 움직임
    │
 control/          제어 루프. 주기와 안전
    │
@@ -828,7 +829,7 @@ telemetry/        옆에서 관찰. 제어를 방해하지 않음
 canbus.py    ← 여기 하나뿐
 ```
 
-그 위는 `CanFrame` 만 다룸. 그래서 **테스트 884개가 `python-can` 없이 돌아감.**
+그 위는 `CanFrame` 만 다룸. 그래서 **테스트 901개가 `python-can` 없이 돌아감.**
 
 ---
 
@@ -1023,7 +1024,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-884 passed in 14.0s
+901 passed in 16.6s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**

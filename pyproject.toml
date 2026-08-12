@@ -21,6 +21,7 @@ imu = ["pyserial>=3.5"]
 huphy-commission = "huphy.scripts.commission:main"
 huphy-bringup = "huphy.scripts.bringup:main"
 huphy-test = "huphy.scripts.selftest:main"
+huphy-run = "huphy.scripts.run:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

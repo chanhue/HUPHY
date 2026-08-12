@@ -1,23 +1,20 @@
 # 정책 실행 — 지금까지 만든 것
 
-**임시 상태임.** 정책 하나를 제어 루프에 태워 보는 데까지만 만들었고, 상태 기계와
-실행 스크립트는 아직 없음.
+**임시 상태임.** 정책 하나를 제어 루프에 태워 돌리는 데까지 만들었음. 상태 기계와
+토크 가드가 없어서 **사람이 지켜보며 돌려야 함.**
 
 ```
 있음   관찰 -> 모델 입력 벡터        src/huphy/control/policy.py
 있음   모델 출력 -> 관절 목표        src/huphy/control/policy.py
 있음   .pt 파일 -> 부를 수 있는 함수  src/huphy/control/rsl_rl.py
+있음   실행 파일                     src/huphy/scripts/run.py
 없음   상태 기계
-없음   실행 스크립트
+없음   토크 가드
 ```
 
 ---
 
 ## 0. 실행
-
-### 0.1 실행 파일이 아직 없음
-
-만들면 이 모양이 됨.
 
 ```bash
 huphy-run --limb right_leg --policy balance
@@ -25,31 +22,34 @@ huphy-run --limb right_leg --policy balance
 
 `balance` / `hopping` 둘 중 하나. 그 이름이 `src/huphy/control/policy.py` 의
 `BALANCE` / `HOPPING`(입력 개수, `action_scale`)을 고르고, 가중치는
-`config/policies/<이름>.pt` 를 씀.
+`config/policies/<이름>.pt` 를 씀. 다른 파일은 `--weights` 로.
 
-지금은 파이썬으로 조립해야 함.
+| 옵션 | 기본값 | 무엇 |
+|---|---|---|
+| `--policy` | 없으면 오류 | `balance` 또는 `hopping` |
+| `--weights` | `config/policies/<정책>.pt` | 더 학습한 모델을 시험할 때 |
+| `--hz` | `50` | 학습 주기와 같아야 함 |
+| `--approach` | `3` | 영점 자세까지 옮기는 시간(초) |
+| `--duration` | 없음 | 이 초만큼만. 생략하면 Ctrl-C 까지 |
 
-```python
-from huphy.config import load_robot
-from huphy.control import ControlLoop, Mode, policy, rsl_rl
-from huphy.scripts.bringup import build_leg
+### 0.1 바로 움직이지 않음
 
-robot = load_robot("config/robot.yaml")
-leg = build_leg(robot, robot.limb("right_leg"))
-leg.connect()
+지금 자세에서 정책 목표로 한 번에 뛰면 관절이 튐. 세 단계를 거침.
 
-model = rsl_rl.load("config/policies/balance.pt", spec=policy.BALANCE)
-motion = policy.policy_motion(model, leg.imus[0], spec=policy.BALANCE)
-
-loop = ControlLoop(leg, hz=50.0, mode=Mode.CONTROL)
-try:
-    loop.run(motion)             # Ctrl-C 까지
-finally:
-    leg.disconnect()
+```
+1  3초에 걸쳐 영점 자세(관절 전부 0)로 천천히 옮김
+2  그 자세로 유지하며 Enter 를 기다림          <- 사람이 손을 떼고 자리를 잡는 시간
+3  Enter 누르면 정책 시작
 ```
 
-**아직 실물에서 돌리면 안 됨.** 발목이 토크가 아니라 각도로 나가고(6.2), 게인이
-학습에 쓴 값이 아니며(6.1), 넘어져도 멈추지 않음(5.5).
+영점 자세로 가는 이유는 정책이 그 자세를 기준으로 학습했기 때문임. 관찰의 관절
+각도가 그 자세 기준의 상대값이라, 다른 자세에서 시작하면 학습 때 본 적 없는 입력이
+들어감.
+
+화면이 아니면(파이프, 서비스) Enter 없이 바로 시작함.
+
+**아직 실물에서 돌리면 안 됨** -- 넘어져도 멈추지 않고(5.5), 발목 토크에 한계 검사가
+없음(5.4).
 
 ### 0.2 실행하면 무슨 일이 일어나나
 
@@ -74,7 +74,7 @@ finally:
 무엇이 무엇을 부르는지.
 
 ```
-실행 파일 (아직 없음)
+scripts/run.py
    │  조립만 함
    ├─ config/loader.py        robot.yaml 읽기
    ├─ scripts/bringup.py      build_leg -- 다리 조립. 브링업과 같은 함수를 씀
@@ -279,8 +279,8 @@ stance/flight 시간이 바뀌므로 최종 값을 받아야 함.
 ## 7. 다음에 할 것
 
 ```
-1. 실행 스크립트          설정 읽기 -> 다리 -> 가중치 -> loop.run()
-2. torch 와 대조값 받기    5.1
-3. 실물 확인              5.2
+1. torch 와 대조값 받기    5.1
+2. 실물 확인              5.2
+3. 토크 가드              5.4
 4. 상태 기계              6.1~6.3 을 같이 손봄
 ```
