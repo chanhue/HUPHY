@@ -4,7 +4,9 @@
 control/
 ├── loop.py      정해진 주기로 한 사이클씩 돌림
 ├── motions.py   매 주기 무엇을 시킬지 정함
-└── policy.py    학습한 정책을 Motion 으로 만듦
+├── policy.py    학습한 정책을 Motion 으로 만듦
+├── rsl_rl.py    체크포인트(.pt) -> 부를 수 있는 함수. numpy 만 씀
+└── POLICY.md    정책 실행 -- 실행 방법, 제한사항, 앞으로 바꿀 것
 ```
 
 ---

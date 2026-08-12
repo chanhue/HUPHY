@@ -1,0 +1,286 @@
+# 정책 실행 — 지금까지 만든 것
+
+**임시 상태임.** 정책 하나를 제어 루프에 태워 보는 데까지만 만들었고, 상태 기계와
+실행 스크립트는 아직 없음.
+
+```
+있음   관찰 -> 모델 입력 벡터        src/huphy/control/policy.py
+있음   모델 출력 -> 관절 목표        src/huphy/control/policy.py
+있음   .pt 파일 -> 부를 수 있는 함수  src/huphy/control/rsl_rl.py
+없음   상태 기계
+없음   실행 스크립트
+```
+
+---
+
+## 0. 실행
+
+### 0.1 실행 파일이 아직 없음
+
+만들면 이 모양이 됨.
+
+```bash
+huphy-run --limb right_leg --policy balance
+```
+
+`balance` / `hopping` 둘 중 하나. 그 이름이 `src/huphy/control/policy.py` 의
+`BALANCE` / `HOPPING`(입력 개수, `action_scale`)을 고르고, 가중치는
+`config/policies/<이름>.pt` 를 씀.
+
+지금은 파이썬으로 조립해야 함.
+
+```python
+from huphy.config import load_robot
+from huphy.control import ControlLoop, Mode, policy, rsl_rl
+from huphy.scripts.bringup import build_leg
+
+robot = load_robot("config/robot.yaml")
+leg = build_leg(robot, robot.limb("right_leg"))
+leg.connect()
+
+model = rsl_rl.load("config/policies/balance.pt", spec=policy.BALANCE)
+motion = policy.policy_motion(model, leg.imus[0], spec=policy.BALANCE)
+
+loop = ControlLoop(leg, hz=50.0, mode=Mode.CONTROL)
+try:
+    loop.run(motion)             # Ctrl-C 까지
+finally:
+    leg.disconnect()
+```
+
+**아직 실물에서 돌리면 안 됨.** 발목이 토크가 아니라 각도로 나가고(6.2), 게인이
+학습에 쓴 값이 아니며(6.1), 넘어져도 멈추지 않음(5.5).
+
+### 0.2 실행하면 무슨 일이 일어나나
+
+```
+1  설정 읽기          config/robot.yaml -> 모터 id, 게인, IMU
+2  다리 만들기        모터 표 + 캘리브레이션(한계각·오프셋) + 발목 기구학
+3  CAN 열기           채널이 안 올라와 있으면 여기서 멈춤
+4  IMU 열기           실패해도 계속 감 (다리는 씀)
+5  가중치 읽기        입력 개수가 정책 이름과 다르면 여기서 멈춤
+6  루프 시작          토크를 넣음
+7  매 주기 (50Hz)     관찰 -> 모델 -> 관절 목표 -> 모터
+8  끝날 때            자세를 붙잡은 뒤 토크 차단
+```
+
+7번 한 주기의 안은 1절에 있음.
+
+8번은 `control/loop.py` 가 `finally` 로 함. Ctrl-C 로 끊든 예외로 끝나든 같은 순서를
+탐.
+
+### 0.3 실행 구조
+
+무엇이 무엇을 부르는지.
+
+```
+실행 파일 (아직 없음)
+   │  조립만 함
+   ├─ config/loader.py        robot.yaml 읽기
+   ├─ scripts/bringup.py      build_leg -- 다리 조립. 브링업과 같은 함수를 씀
+   ├─ control/rsl_rl.py       .pt -> 모델 함수
+   ├─ control/policy.py       모델 함수 -> Motion
+   └─ control/loop.py         run(Motion)
+                                 │  매 주기
+                                 ├─ robots/leg.py      관찰, 명령 만들기, 전송
+                                 │    ├─ kinematics/ankle.py   발목 IK/FK/토크
+                                 │    ├─ safety/guards.py      한계·점프 검사
+                                 │    └─ motors/robstride/     프레임 만들기
+                                 └─ telemetry/                 기록
+```
+
+브링업이 쓰는 것과 **같은 루프·같은 다리**임. 다르게 들어가는 것은 `Motion` 하나뿐임
+— 브링업은 사인파 같은 것을 넣고, 여기는 정책을 넣음.
+
+---
+
+## 1. 한 주기에 무슨 일이 일어나나
+
+```
+모터에서 각도·속도를 읽음 (도, 도/초)        robots/leg.py 의 get_observation
+IMU 에서 각속도·자세를 읽음                   sensors/xsens/imu.py
+   ↓
+숫자 24개(또는 26개)로 늘어놓음. 라디안으로 바꿈    control/policy.py
+   ↓
+(입력 - mean) / std 로 정규화                 control/rsl_rl.py
+   ↓
+완전연결 4층 + ELU                            control/rsl_rl.py
+   ↓
+숫자 6개. 단위 없음
+   ↓
+× action_scale -> 라디안 -> 도                control/policy.py
+   ↓
+관절 목표 6개
+   ↓
+모터 7~10 은 각도 그대로, 11·12 는 기구학을 거쳐 각도나 토크로   robots/leg.py
+   ↓
+CAN 프레임
+```
+
+정책이 50Hz 로 학습됐으므로 제어 루프도 50Hz 로 돌리는 것이 맞음.
+
+---
+
+## 2. 관찰 24개 / 26개의 구성
+
+학습 쪽(mjlab)이 이 순서로 이어 붙임. 가중치 파일의 입력 차원과 맞음.
+
+| | 개수 | 무엇 |
+|---|---|---|
+| `base_ang_vel` | 3 | IMU 각속도 (rad/s) |
+| `projected_gravity` | 3 | 중력 방향을 몸체 좌표로. 수평이면 `(0,0,-1)` |
+| `joint_pos` | 6 | 관절 각도 (rad) |
+| `joint_vel` | 6 | 관절 각속도 (rad/s) |
+| `actions` | 6 | **직전 주기에 모델이 낸 값 그대로.** 배율 곱하기 전 |
+| `hop_phase` | 2 | `sin`/`cos`. hopping 에만 |
+
+```
+balance  24        hopping  26
+```
+
+관절 순서는 CAN id 7 → 12 임. 모델은 이름을 모르고 순서만 봄.
+
+```
+hip_pitch(7)  hip_roll(8)  hip_yaw(9)  knee(10)  ankle_pitch  ankle_roll
+                                                  └── 모터 11·12 가 함께 만듦
+```
+
+---
+
+## 3. 행동을 관절 목표로
+
+```
+관절 목표(rad) = 기본자세 + action_scale × 모델출력
+```
+
+기본 자세가 전부 0 이라 두 번째 항만 남음.
+
+| | `action_scale` | 출력 1.0 이면 |
+|---|---|---|
+| balance | 0.25 | 14.3도 |
+| hopping | 0.5 | 28.6도 |
+
+**이 값은 `.pt` 안에 없음.** 학습 설정에만 있어서 코드에 적어 뒀음
+(`src/huphy/control/policy.py` 의 `BALANCE` / `HOPPING`). 틀리면 로봇이 두 배로
+움직이는데 에러는 안 남.
+
+---
+
+## 4. 체크포인트를 numpy 로 읽음
+
+`.pt` 는 zip 이고 안에 pickle 하나와 float32 원본이 들어 있음. torch 없이 읽음 —
+신경망이 4층이라 곱셈 5만 번이면 끝나고, 제어 루프가 도는 파이에 200MB 짜리를 넣을
+이유가 없음.
+
+꺼내는 것:
+
+```
+mlp.0 / mlp.2 / mlp.4 / mlp.6      완전연결 4층. 사이에 ELU
+obs_normalizer._mean / ._std       학습 중에 쌓인 통계
+```
+
+층 크기는 파일에서 읽으므로 학습 쪽에서 층을 바꿔도 따라감.
+
+`distribution.std_param` 은 학습 때 탐색용이라 안 씀. `critic_state_dict` 도 안 씀.
+
+가중치는 `config/policies/balance.pt`, `hopping.pt` 에 있고 테스트가 그 파일을 직접
+읽음.
+
+---
+
+## 5. 제한사항
+
+### 5.1 torch 와 대조하지 않았음
+
+numpy 로 다시 짠 계산이 torch 와 같은 값을 내는지 **확인 못 했음.** 이 환경에
+torch 가 없음.
+
+확인 방법: 학습하는 쪽(torch 있는 곳)에서 같은 입력을 넣어 나온 출력을 뽑아 주면,
+그 값과 맞는지 테스트로 고정할 수 있음. 한 번만 하면 됨.
+
+### 5.2 실물에서 아무것도 확인 안 됨
+
+아래는 전부 "설계대로 조립됐다" 는 전제 위에 있음.
+
+- 모터의 + 방향이 시뮬과 같은지
+- 실물 영점 자세가 시뮬의 기준 자세(관절 전부 0)와 같은지
+- IMU 를 붙인 방향
+- 관절 한계가 시뮬 범위와 맞는지 (시뮬 `knee` 는 0~115도)
+
+### 5.3 IMU 좌표
+
+IMU 를 시뮬 프레임에 맞춰 붙였다고 들었음. 그래서 정책에 넣을 때 좌표 변환을 하지
+않음.
+
+다만 브링업 화면과 텔레메트리에 나오는 `roll`/`pitch` 는 **IMU 프레임 기준**이라,
+로봇 기준으로 읽으면 둘이 바뀌어 보임. 표시용 변환은 아직 없음.
+
+### 5.4 발목 토크에 가드가 없음
+
+발목을 토크로 보낼 때 한계 검사가 안 걸림. `safety/guards.py` 는 목표 각도를 받아
+자르는데 토크 명령에는 넘길 각도가 없음.
+
+### 5.5 정책이 늦거나 멈추면
+
+아무 대비가 없음. 모델이 `None` 이나 NaN 을 내면 그대로 나가고, 모델 호출이 안
+돌아오면 제어 루프도 같이 멈춤.
+
+### 5.6 `hop_period_s` 는 임의값
+
+hopping 의 뛰는 주기를 0.6초로 적어 뒀는데 **근거가 없음.** 학습 쪽 커리큘럼에서
+stance/flight 시간이 바뀌므로 최종 값을 받아야 함.
+
+---
+
+## 6. 상태 기계를 붙일 때 바꿔야 하는 것
+
+상태 기계는 "지금 무엇을 돌릴지" 를 고르는 것임. 지금 구조로 안 되는 게 셋임.
+
+### 6.1 게인을 실행 중에 못 바꿈
+
+지금은 `config/robot.yaml` 의 `kp`/`kd` 를 읽어 `Motor.gains` 에 넣고, 그 값이 그대로
+프레임에 실림. `Motor` 가 frozen 이라 만든 뒤에는 못 고침.
+
+상태마다 게인이 달라야 함.
+
+```
+힘 빼고 대기    kp = 0       다리가 손에 딸려 움직여야 함
+자세 잡기       kp = 30      버텨야 함
+정책            kp = 20, kd = 0.502    학습에 쓴 값
+```
+
+**바꿀 곳**: `robots/leg.py` 가 게인 사본을 들고, 프레임을 만들 때 설정 대신 그
+사본을 보게 함. 설정은 원래 값으로 남겨 둠.
+
+### 6.2 발목 출력 모드를 실행 중에 못 바꿈
+
+`robots/leg.py` 의 `ankle_output` 이 생성자에서 정해짐. 대기 상태에서는 토크가 필요
+없고 정책에서는 필요한데 오갈 수 없음.
+
+**바꿀 곳**: 값 검사를 생성자 밖으로 빼서 실행 중에도 바꿀 수 있게.
+
+### 6.3 정책이 든 "직전 행동" 을 되돌릴 수 없음
+
+정책은 자기가 직전에 낸 값 6개를 다음 주기 입력으로 받음. `control/policy.py` 가 그
+값을 함수 안에 들고 있는데 **밖에서 0으로 되돌릴 방법이 없음.**
+
+정책 상태를 나갔다 다시 들어오면 예전 값이 남아 있어서, 시뮬에서 에피소드가 새로
+시작할 때와 다른 상태로 시작함.
+
+**바꿀 곳**: `policy_motion` 이 되돌리는 방법을 같이 내거나 작은 클래스로 바꿈.
+
+### 6.4 상태별 경과 시간은 이미 됨
+
+`hop_phase` 가 `t` 를 받아 계산하므로, 상태 기계가 "그 상태가 시작한 뒤로 흐른 시간"
+을 넘기면 뛰는 위상이 상태 진입 시점부터 셈. `motions.chain` 이 이미 같은 방식임.
+
+---
+
+## 7. 다음에 할 것
+
+```
+1. 실행 스크립트          설정 읽기 -> 다리 -> 가중치 -> loop.run()
+2. torch 와 대조값 받기    5.1
+3. 실물 확인              5.2
+4. 상태 기계              6.1~6.3 을 같이 손봄
+```

@@ -171,7 +171,7 @@ pip install -e ".[imu]"     # + pyserial. IMU 를 붙일 때만
 ### 확인
 
 ```bash
-python -m pytest tests -q          # 860 passed
+python -m pytest tests -q          # 884 passed
 huphy-commission --help
 ```
 
@@ -786,7 +786,8 @@ scripts/          터미널 진입점
 control/          제어 루프. 주기와 안전
    │
    ├─ motions.py      매 주기 무엇을 시킬지
-   └─ policy.py       학습한 정책을 Motion 으로
+   ├─ policy.py       학습한 정책을 Motion 으로
+   └─ rsl_rl.py       체크포인트(.pt) 읽기. numpy 만 씀
    │
 robots/           ─── 관절 이름 ↔ 모터 id, cal ↔ raw 경계 ───
    │
@@ -827,7 +828,7 @@ telemetry/        옆에서 관찰. 제어를 방해하지 않음
 canbus.py    ← 여기 하나뿐
 ```
 
-그 위는 `CanFrame` 만 다룸. 그래서 **테스트 860개가 `python-can` 없이 돌아감.**
+그 위는 `CanFrame` 만 다룸. 그래서 **테스트 884개가 `python-can` 없이 돌아감.**
 
 ---
 
@@ -1022,7 +1023,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-860 passed in 14.0s
+884 passed in 14.0s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**

@@ -17,6 +17,7 @@ tests/
 ├── test_telemetry.py       telemetry/                  65개
 ├── test_control.py         control/                    45개
 ├── test_policy.py          control/policy.py           30개
+├── test_rsl_rl.py          control/rsl_rl.py           24개
 ├── test_bringup.py         scripts/bringup.py          36개
 └── test_selftest.py        scripts/selftest.py         27개
 ```
@@ -30,7 +31,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-860 passed in 14.0s
+884 passed in 14.0s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -262,6 +263,17 @@ UDP 는 **진짜 소켓**으로 자기 자신에게 보내 받아 봄 — 직렬
 | `TestSpecs` | 4 | 가중치 파일과 맞는 값 |
 
 모델 자리에 함수를 넣어 돌림 — torch 없이 실행됨.
+
+### `test_rsl_rl.py` — 24개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestLoad` | 5 | 규격 대조, 잘못된 파일 |
+| `TestForward` | 6 | 계산, 정규화, 같은 입력이면 같은 출력 |
+| `TestElu` | 4 | 학습 설정의 활성함수 |
+| `TestWithPolicy` | 1 | 읽은 것을 Motion 에 그대로 |
+
+`config/policies/` 의 **진짜 가중치 파일**을 읽음. torch 없이 돌아감.
 
 ### `test_bringup.py` — 36개
 
