@@ -49,7 +49,7 @@ CSV 헤더를 첫 줄에 써야 하고, PlotJuggler 레이아웃도 미리 만�
 
 ## 두 갈래로 나감
 
-**빠른 것 — 매 주기** (40필드, 약 1.1 KB)
+**빠른 것 — 매 주기** (42필드, 약 1.2 KB)
 
 ```
 t                            시작부터 흐른 초
@@ -66,7 +66,15 @@ right_leg/ankle_pitch/tgt    목표 각도
 right_leg/ankle_pitch/err    tgt - pos
 right_leg/ankle_pitch/vel    실측 각속도. 모터 속도를 야코비안으로 푼 것
 right_leg/ankle_roll/...     같은 넷
+
+right_leg/ankle_a1/tau_cmd   tau_ff 로 실어 보낸 토크
+right_leg/ankle_a2/tau_cmd
 ```
+
+`tau` 와 `tau_cmd` 는 다른 값임 — 앞은 **모터가 냈다고 보고한 값**이고 뒤는
+**우리가 시킨 값**임. 둘을 같이 봐야 `tau` 가 낮을 때 적게 시킨 것인지, 시킨 만큼
+못 낸 것인지(전류 한계·마찰·걸림) 구분됨. 위치 모드에서는 `tau_cmd` 가 늘 0임 —
+모드에 따라 열이 나타났다 사라지면 CSV 가 밀림.
 
 발목만 **관절 축**을 따로 냄. 모터 값(`ankle_a1/pos`)만 보면 발이 어떤 자세인지 안
 보임 — 두 모터가 로드로 물려 있어 각도 하나가 자세 하나에 대응하지 않음. 모터 값도

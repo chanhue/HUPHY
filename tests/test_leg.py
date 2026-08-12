@@ -686,3 +686,24 @@ class TestAnkleVelocity:
         assert leg.ankle_velocity() == pytest.approx(
             tuple(np.linalg.solve(jac, motor))
         )
+
+    def test_the_commanded_torque_is_recorded(self, fake_can):
+        """모터가 보고한 tau 와 짝임. 시킨 만큼 못 낸 것인지 봐야 함."""
+        torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
+        commands = torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
+        a1 = torque_leg.config.motors["ankle_a1"].id
+        assert torque_leg.last_torque["ankle_a1"] == commands[a1].torque_nm
+
+    def test_position_mode_records_zero(self, leg):
+        leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
+        assert leg.last_torque == {"ankle_a1": 0.0, "ankle_a2": 0.0}
+
+    def test_a_dropped_command_records_zero(self, fake_can):
+        """안 보냈으면 0임. 직전 값이 남으면 계속 보낸 것처럼 보임."""
+        torque_leg = build(ankle_output="torque", ankle_kp=(20.0, 20.0))
+        torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
+        FakeBus.position[11] = 170.0
+        FakeBus.position[12] = -170.0
+        torque_leg.refresh()
+        torque_leg.build_commands({"ankle_pitch": 10.0, "ankle_roll": 5.0})
+        assert torque_leg.last_torque == {"ankle_a1": 0.0, "ankle_a2": 0.0}

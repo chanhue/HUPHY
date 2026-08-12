@@ -92,6 +92,13 @@ class Leg(Robot):
 
     name = "leg"
 
+    torque_motors = ANKLE_MOTORS
+    """토크를 실어 보낼 수 있는 모터. **모드와 무관하게 고정임.**
+
+    텔레메트리 열이 모드에 따라 나타났다 사라지면 CSV 가 밀림. 위치 모드에서는
+    0으로 나감.
+    """
+
     def __init__(
         self,
         config: LimbConfig,
@@ -160,6 +167,14 @@ class Leg(Robot):
         self._ankle_guess: Tuple[float, float] = (0.0, 0.0)
         self._ankle_pose: Optional[Tuple[float, float]] = None
         """이번 주기의 발목각. 못 풀었으면 `None`. `_update_ankle_pose` 가 채움."""
+
+        self._last_torque: Dict[str, float] = {m: 0.0 for m in ANKLE_MOTORS}
+        """이번 주기에 `tau_ff` 로 실어 보낸 토크. 안 보냈으면 0.
+
+        모터가 보고하는 `MotorState.torque_nm` 은 **모터가 냈다는 값**이고 이쪽은
+        **우리가 시킨 값**임. 둘을 같이 봐야 시킨 만큼 못 낸 것인지, 애초에 적게
+        시킨 것인지 구분됨.
+        """
         self.counters = guards.GuardCounters()
 
         # 링크 상태. 명령이 씹혔는지 판단하는 근거임 -- MIT 모드는 명령을 받으면
@@ -194,6 +209,11 @@ class Leg(Robot):
 
     def _motor_id(self, motor_name: str) -> int:
         return self.config.motors[motor_name].id
+
+    @property
+    def last_torque(self) -> Dict[str, float]:
+        """직전 주기에 `tau_ff` 로 보낸 토크. 모터 이름 -> Nm."""
+        return dict(self._last_torque)
 
     def __repr__(self) -> str:
         return f"Leg({self.id}, {self.config.channel}, 관절 {len(JOINT_NAMES)}개)"
@@ -425,6 +445,8 @@ class Leg(Robot):
         now = time.monotonic()
         commands: Dict[int, MitCommand] = {}
         sent: Dict[str, float] = {}
+        # 이번 주기에 실제로 실어 보낸 것만 남김. 안 보냈으면 0임.
+        self._last_torque = {m: 0.0 for m in ANKLE_MOTORS}
 
         for motor_name, target_cal in self._motor_targets(action).items():
             motor = self.config.motors[motor_name]
@@ -510,6 +532,7 @@ class Leg(Robot):
 
         sent["ankle_pitch"] = float(action["ankle_pitch"])
         sent["ankle_roll"] = float(action["ankle_roll"])
+        self._last_torque = {"ankle_a1": tau1, "ankle_a2": tau2}
         return {
             self._motor_id("ankle_a1"): MitCommand(
                 position_deg=0.0, kp=0.0, kd=0.0, torque_nm=tau1

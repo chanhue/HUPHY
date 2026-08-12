@@ -235,7 +235,7 @@ JSON 으로 못 보내고 CSV 에서도 읽기 어려움.
 
 | | 주기 | 필드 | 크기 |
 |---|---|---|---|
-| 빠른 것 | 매 주기 | 모터별 `pos tgt err vel tau` + 발목 관절 `pos tgt err vel` | 약 1.1 KB |
+| 빠른 것 | 매 주기 | 모터별 `pos tgt err vel tau` + 발목 관절 `pos tgt err vel` + 발목 `tau_cmd` | 약 1.2 KB |
 | 진단 | 10주기마다 | `temp age ack miss`, 카운터, `since_*` | 약 950 B |
 | IMU | 매 주기 | `roll pitch yaw ax ay az gx gy gz age` | 붙었을 때만 |
 
@@ -332,7 +332,6 @@ python -m huphy.scripts.bringup --limb right_leg
 | 한계까지 남은 여유 | `safety.limits.margin_to_limit()` 은 있음 |
 | 게인 값 | 설정에 고정이라 실행 중 안 바뀜 |
 | 진단 패킷 주기 설정 | 지금은 코드 기본값(10주기) |
-| 발목에 명령한 토크 | 토크 모드에서만 의미가 있고, `Leg` 가 들고 있지 않음 |
 
 ---
 

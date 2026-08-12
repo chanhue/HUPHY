@@ -75,6 +75,18 @@ DIAG_MOTOR_FIELDS = ("temp", "age", "ack", "miss")
 명령 여부와 무관하게 참임.
 """
 
+TORQUE_COMMAND_FIELD = "tau_cmd"
+"""`tau_ff` 로 실어 보낸 토크. 모터의 `tau` 와 짝임.
+
+    tau       모터가 냈다고 보고한 값
+    tau_cmd   우리가 시킨 값
+
+둘을 같이 봐야 원인이 좁혀짐 -- `tau` 가 낮을 때 적게 시킨 것인지, 시킨 만큼 못
+낸 것인지(전류 한계·마찰·걸림) 구분됨.
+
+위치 모드에서는 늘 0임. **모드에 따라 열이 나타났다 사라지지 않게** 그때도 냄.
+"""
+
 ANKLE_JOINT_FIELDS = ("pos", "tgt", "err", "vel")
 """발목 **관절** 값. 모터 값과 별개로 냄.
 
@@ -126,6 +138,8 @@ def fast_field_names(robot: Any) -> Tuple[str, ...]:
         names.extend(_key(limb, motor, f) for f in FAST_MOTOR_FIELDS)
     for joint in _ankle_joints(robot):
         names.extend(_key(limb, joint, f) for f in ANKLE_JOINT_FIELDS)
+    for motor in _torque_motors(robot):
+        names.append(_key(limb, motor, TORQUE_COMMAND_FIELD))
     return tuple(names)
 
 
@@ -204,6 +218,11 @@ def build_fast(robot: Any, *, t: float, loop_dt_ms: float = 0.0) -> Dict[str, fl
         out[_key(limb, joint, "tgt")] = tgt
         out[_key(limb, joint, "err")] = tgt - pos
         out[_key(limb, joint, "vel")] = velocity[index]
+
+    # 시킨 토크. 모터가 보고한 tau 와 짝임.
+    commanded = _torque_command(robot)
+    for motor in _torque_motors(robot):
+        out[_key(limb, motor, TORQUE_COMMAND_FIELD)] = float(commanded.get(motor, 0.0))
     return out
 
 
@@ -300,6 +319,20 @@ def _ankle_joints(robot: Any) -> Tuple[str, ...]:
     """
     joints = getattr(robot, "joint_names", ())
     return tuple(j for j in joints if j in ("ankle_pitch", "ankle_roll"))
+
+
+def _torque_motors(robot: Any) -> Tuple[str, ...]:
+    """토크를 실어 보낼 수 있는 모터. 없으면 빈 것.
+
+    로봇이 고정으로 내는 목록임 -- 모드에 따라 바뀌면 CSV 열이 밀림.
+    """
+    return tuple(getattr(robot, "torque_motors", ()))
+
+
+def _torque_command(robot: Any) -> Dict[str, float]:
+    """직전 주기에 시킨 토크. 없으면 빈 사전."""
+    value = getattr(robot, "last_torque", None)
+    return dict(value) if value else {}
 
 
 def _ankle_velocity(robot: Any) -> Tuple[float, float]:

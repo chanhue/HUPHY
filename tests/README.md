@@ -12,9 +12,9 @@ tests/
 ├── test_calibration.py     calibration/                38개
 ├── test_commission_cli.py  scripts/commission.py       71개
 ├── test_ankle.py           kinematics/ankle.py        165개
-├── test_leg.py             robots/leg.py               65개
+├── test_leg.py             robots/leg.py               68개
 ├── test_sensors.py         sensors/                    21개
-├── test_telemetry.py       telemetry/                  60개
+├── test_telemetry.py       telemetry/                  65개
 ├── test_control.py         control/                    45개
 ├── test_bringup.py         scripts/bringup.py          36개
 └── test_selftest.py        scripts/selftest.py         27개
@@ -29,7 +29,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-822 passed in 13.9s
+830 passed in 14.0s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -194,7 +194,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 `TestSolveFk` 가 큰 것은 시험 범위 격자 187개를 도는 매개변수 테스트 때문임 —
 **추정 `(0, 0)` 으로도 항상 원래 자세를 찾는지**를 범위 전체에서 확인함.
 
-### `test_leg.py` — 65개
+### `test_leg.py` — 68개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -207,7 +207,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestLifecycle` | 2 | 예외 중 토크 차단 |
 | `TestMirroredLeg` | 1 | 좌우 대칭 |
 | `TestLinkStatus` | 7 | ack, age, miss, since_* |
-| `TestAnkleOutputMode` | 10 | 위치/토크 전환, IK 건너뜀, 자세 없음 |
+| `TestAnkleOutputMode` | 13 | 위치/토크 전환, IK 건너뜀, 시킨 토크 기록 |
 | `TestAnkleVelocity` | 2 | 모터 속도 -> 관절 속도 |
 
 ### `test_sensors.py` — 21개
@@ -221,7 +221,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 
 리더를 가짜로 갈아 끼움 — `pyserial` 없이 돌아야 함.
 
-### `test_telemetry.py` — 60개
+### `test_telemetry.py` — 65개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -230,6 +230,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestUdp` | 10 | 진짜 소켓 왕복, 반올림, MTU, 실패 |
 | `TestCsv` | 9 | 헤더, 열 순서, flush, 실패 |
 | `TestTelemetry` | 8 | 둘이 같은 스냅샷, 진단 감축 |
+| `TestCommandedTorque` | 5 | 시킨 토크와 보고된 토크 |
 | `TestAnkleJointFields` | 8 | 관절 축, 오차, 각속도, MTU |
 | `TestImuFields` | 7 | IMU 개체 이름 접두, 없을 때 열 |
 | `TestImuPacket` | 2 | 다리와 별도 패킷 |

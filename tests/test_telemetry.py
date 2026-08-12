@@ -436,6 +436,41 @@ class AnkleRobot(FakeRobot):
         return (1.5, -0.5)
 
 
+class TorqueRobot(FakeRobot):
+    """토크를 실어 보낼 수 있는 로봇."""
+
+    torque_motors = ("ankle_a1",)
+
+    def __init__(self, commanded=None, **kwargs):
+        super().__init__(**kwargs)
+        self.last_torque = commanded if commanded is not None else {"ankle_a1": 1.5}
+
+
+class TestCommandedTorque:
+    """모터가 보고한 `tau` 와 우리가 시킨 `tau_cmd` 는 다른 값임."""
+
+    def test_the_column_exists(self):
+        assert "right_leg/ankle_a1/tau_cmd" in snapshot.field_names(TorqueRobot())
+
+    def test_it_is_what_we_sent(self):
+        row = snapshot.build_fast(TorqueRobot(), t=0.0)
+        assert row["right_leg/ankle_a1/tau_cmd"] == 1.5
+
+    def test_it_sits_next_to_the_reported_torque(self):
+        """둘을 같이 봐야 적게 시킨 것인지 못 낸 것인지 구분됨."""
+        row = snapshot.build_fast(TorqueRobot(), t=0.0)
+        assert "right_leg/ankle_a1/tau" in row
+        assert "right_leg/ankle_a1/tau_cmd" in row
+
+    def test_nothing_commanded_is_zero(self):
+        """위치 모드에서는 늘 0임. 열이 사라지면 CSV 가 밀림."""
+        row = snapshot.build_fast(TorqueRobot(commanded={}), t=0.0)
+        assert row["right_leg/ankle_a1/tau_cmd"] == 0.0
+
+    def test_a_robot_without_torque_motors_gets_no_column(self, robot):
+        assert not any("tau_cmd" in n for n in snapshot.field_names(robot))
+
+
 class TestAnkleJointFields:
     def test_no_ankle_adds_no_columns(self, robot):
         """팔에는 발목이 없음."""
