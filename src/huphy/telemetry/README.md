@@ -49,7 +49,7 @@ CSV 헤더를 첫 줄에 써야 하고, PlotJuggler 레이아웃도 미리 만�
 
 ## 두 갈래로 나감
 
-**빠른 것 — 매 주기** (32필드, 약 850 B)
+**빠른 것 — 매 주기** (40필드, 약 1.1 KB)
 
 ```
 t                            시작부터 흐른 초
@@ -60,7 +60,17 @@ right_leg/knee/tgt           목표 위치. 실제로 나간 것
 right_leg/knee/err           tgt - pos
 right_leg/knee/vel           실측 속도
 right_leg/knee/tau           실측 토크
+
+right_leg/ankle_pitch/pos    실측 각도. 모터각을 FK 로 푼 것
+right_leg/ankle_pitch/tgt    목표 각도
+right_leg/ankle_pitch/err    tgt - pos
+right_leg/ankle_pitch/vel    실측 각속도. 모터 속도를 야코비안으로 푼 것
+right_leg/ankle_roll/...     같은 넷
 ```
+
+발목만 **관절 축**을 따로 냄. 모터 값(`ankle_a1/pos`)만 보면 발이 어떤 자세인지 안
+보임 — 두 모터가 로드로 물려 있어 각도 하나가 자세 하나에 대응하지 않음. 모터 값도
+그대로 나가므로 둘을 같이 볼 수 있음.
 
 **진단 — N주기마다** (35필드, 약 950 B. 기본 10주기)
 

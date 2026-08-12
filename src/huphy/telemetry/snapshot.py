@@ -75,6 +75,19 @@ DIAG_MOTOR_FIELDS = ("temp", "age", "ack", "miss")
 명령 여부와 무관하게 참임.
 """
 
+ANKLE_JOINT_FIELDS = ("pos", "tgt", "err", "vel")
+"""발목 **관절** 값. 모터 값과 별개로 냄.
+
+    pos    실측 각도. 모터각을 FK 로 푼 것
+    tgt    목표 각도. 실제로 나간 것
+    err    tgt - pos
+    vel    실측 각속도 (도/초). 모터 속도를 야코비안으로 푼 것
+
+모터 값(`ankle_a1/pos` 등)만 보면 발이 실제로 어떤 자세인지 안 보임 -- 두 모터가
+로드로 물려 있어 각도 하나가 자세 하나에 대응하지 않음. 사람도 모델도 관절로
+생각하므로 그 축을 같이 냄.
+"""
+
 IMU_FIELDS = ("roll", "pitch", "yaw", "ax", "ay", "az", "gx", "gy", "gz", "age")
 """IMU 하나가 내는 값.
 
@@ -111,6 +124,8 @@ def fast_field_names(robot: Any) -> Tuple[str, ...]:
     names = list(FAST_GLOBAL)
     for motor in robot.motor_names:
         names.extend(_key(limb, motor, f) for f in FAST_MOTOR_FIELDS)
+    for joint in _ankle_joints(robot):
+        names.extend(_key(limb, joint, f) for f in ANKLE_JOINT_FIELDS)
     return tuple(names)
 
 
@@ -179,6 +194,16 @@ def build_fast(robot: Any, *, t: float, loop_dt_ms: float = 0.0) -> Dict[str, fl
         out[_key(limb, motor, "err")] = tgt - pos
         out[_key(limb, motor, "vel")] = float(observation.get(f"{motor}.vel", 0.0))
         out[_key(limb, motor, "tau")] = float(observation.get(f"{motor}.torque", 0.0))
+
+    # 발목 관절. 모터 값과 축이 달라 따로 냄.
+    velocity = _ankle_velocity(robot)
+    for index, joint in enumerate(_ankle_joints(robot)):
+        pos = float(observation.get(f"{joint}.pos", 0.0))
+        tgt = float(sent.get(joint, pos))
+        out[_key(limb, joint, "pos")] = pos
+        out[_key(limb, joint, "tgt")] = tgt
+        out[_key(limb, joint, "err")] = tgt - pos
+        out[_key(limb, joint, "vel")] = velocity[index]
     return out
 
 
@@ -268,6 +293,29 @@ def build(robot: Any, *, t: float, loop_dt_ms: float = 0.0) -> Dict[str, float]:
 # ===========================================================================
 # 없어도 0을 냄
 # ===========================================================================
+def _ankle_joints(robot: Any) -> Tuple[str, ...]:
+    """이 로봇에 발목 관절이 있으면 그 이름들. 없으면 빈 것.
+
+    `Robot` 계약에 없는 선택 기능임 -- 팔에는 발목이 없음.
+    """
+    joints = getattr(robot, "joint_names", ())
+    return tuple(j for j in joints if j in ("ankle_pitch", "ankle_roll"))
+
+
+def _ankle_velocity(robot: Any) -> Tuple[float, float]:
+    """발목 관절 각속도. 없거나 실패하면 0.
+
+    **예외를 삼킴.** 기록이 제어를 멈추면 안 됨.
+    """
+    getter = getattr(robot, "ankle_velocity", None)
+    if not callable(getter):
+        return (0.0, 0.0)
+    try:
+        return getter()
+    except Exception:
+        return (0.0, 0.0)
+
+
 def _imu_names(robot: Any) -> Tuple[str, ...]:
     """붙은 IMU 이름들. 없으면 빈 것.
 

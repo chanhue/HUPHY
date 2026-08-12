@@ -14,7 +14,7 @@ tests/
 ├── test_ankle.py           kinematics/ankle.py        165개
 ├── test_leg.py             robots/leg.py               65개
 ├── test_sensors.py         sensors/                    21개
-├── test_telemetry.py       telemetry/                  52개
+├── test_telemetry.py       telemetry/                  60개
 ├── test_control.py         control/                    45개
 ├── test_bringup.py         scripts/bringup.py          36개
 └── test_selftest.py        scripts/selftest.py         27개
@@ -29,7 +29,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-814 passed in 14.0s
+822 passed in 13.9s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -221,7 +221,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 
 리더를 가짜로 갈아 끼움 — `pyserial` 없이 돌아야 함.
 
-### `test_telemetry.py` — 52개
+### `test_telemetry.py` — 60개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
@@ -230,6 +230,7 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestUdp` | 10 | 진짜 소켓 왕복, 반올림, MTU, 실패 |
 | `TestCsv` | 9 | 헤더, 열 순서, flush, 실패 |
 | `TestTelemetry` | 8 | 둘이 같은 스냅샷, 진단 감축 |
+| `TestAnkleJointFields` | 8 | 관절 축, 오차, 각속도, MTU |
 | `TestImuFields` | 7 | IMU 개체 이름 접두, 없을 때 열 |
 | `TestImuPacket` | 2 | 다리와 별도 패킷 |
 

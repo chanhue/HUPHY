@@ -161,7 +161,7 @@ pip install -e ".[imu]"     # + pyserial. IMU 를 붙일 때만
 ### 확인
 
 ```bash
-python -m pytest tests -q          # 814 passed
+python -m pytest tests -q          # 822 passed
 huphy-commission --help
 ```
 
@@ -814,7 +814,7 @@ telemetry/        옆에서 관찰. 제어를 방해하지 않음
 canbus.py    ← 여기 하나뿐
 ```
 
-그 위는 `CanFrame` 만 다룸. 그래서 **테스트 814개가 `python-can` 없이 돌아감.**
+그 위는 `CanFrame` 만 다룸. 그래서 **테스트 822개가 `python-can` 없이 돌아감.**
 
 ---
 
@@ -1009,7 +1009,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-814 passed in 14.0s
+822 passed in 13.9s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**

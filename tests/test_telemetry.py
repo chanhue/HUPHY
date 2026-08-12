@@ -417,6 +417,76 @@ class TestTelemetry:
 
 
 # ===========================================================================
+# 발목 관절
+# ===========================================================================
+class AnkleRobot(FakeRobot):
+    """발목 관절을 가진 로봇. 모터 값과 축이 다름."""
+
+    joint_names = ("hipz", "knee", "ankle_pitch", "ankle_roll")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._obs["ankle_pitch.pos"] = 10.0
+        self._obs["ankle_roll.pos"] = 5.0
+        self.last_sent = dict(self.last_sent)
+        self.last_sent["ankle_pitch"] = 12.0
+        self.last_sent["ankle_roll"] = 5.0
+
+    def ankle_velocity(self):
+        return (1.5, -0.5)
+
+
+class TestAnkleJointFields:
+    def test_no_ankle_adds_no_columns(self, robot):
+        """팔에는 발목이 없음."""
+        assert not any("ankle_pitch/" in n for n in snapshot.field_names(robot))
+
+    def test_the_joint_axis_is_separate_from_the_motors(self):
+        """모터 값만 보면 발이 어떤 자세인지 안 보임."""
+        names = snapshot.field_names(AnkleRobot())
+        assert "right_leg/ankle_pitch/pos" in names
+        assert "right_leg/ankle_a1/pos" in names          # 모터 값도 그대로
+
+    def test_build_matches_the_field_names(self):
+        ankle = AnkleRobot()
+        assert set(snapshot.build(ankle, t=0.0)) == set(snapshot.field_names(ankle))
+
+    def test_error_is_target_minus_measured(self):
+        row = snapshot.build_fast(AnkleRobot(), t=0.0)
+        assert row["right_leg/ankle_pitch/pos"] == 10.0
+        assert row["right_leg/ankle_pitch/tgt"] == 12.0
+        assert row["right_leg/ankle_pitch/err"] == pytest.approx(2.0)
+
+    def test_velocity_comes_from_the_robot(self):
+        row = snapshot.build_fast(AnkleRobot(), t=0.0)
+        assert row["right_leg/ankle_pitch/vel"] == 1.5
+        assert row["right_leg/ankle_roll/vel"] == -0.5
+
+    def test_no_target_means_zero_error(self):
+        """명령하지 않았으면 실측을 목표로 둠. 가짜 오차가 남는 것보다 나음."""
+        ankle = AnkleRobot()
+        ankle.last_sent = {}
+        row = snapshot.build_fast(ankle, t=0.0)
+        assert row["right_leg/ankle_pitch/err"] == 0.0
+
+    def test_a_broken_velocity_does_not_stop_recording(self):
+        class Broken(AnkleRobot):
+            def ankle_velocity(self):
+                raise RuntimeError("특이점")
+
+        row = snapshot.build_fast(Broken(), t=0.0)
+        assert row["right_leg/ankle_pitch/vel"] == 0.0
+
+    def test_the_fast_packet_still_fits(self):
+        """다리 하나가 이미 MTU 에 가까움. 열이 늘면 확인해야 함."""
+        row = snapshot.build_fast(AnkleRobot(motors=(
+            "hipz", "hipx", "hipy", "knee", "ankle_a1", "ankle_a2")), t=0.0)
+        payload = json.dumps({k: round(v, 2) for k, v in row.items()},
+                             separators=(",", ":")).encode()
+        assert len(payload) <= MTU_LIMIT
+
+
+# ===========================================================================
 # IMU — 붙었을 때만 나감
 # ===========================================================================
 class FakeImu:
