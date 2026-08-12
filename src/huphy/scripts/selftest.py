@@ -261,7 +261,6 @@ def _run(leg: Leg, loop: ControlLoop, targets, motion, *, approach_s: float) -> 
         print(f"  상태를 못 읽은 관절: {missing}. 배선과 CAN id 를 확인할 것.")
         return 1
 
-    print(f"\n  {approach_s:.0f}초에 걸쳐 시작 자세로 옮긴 뒤 시작합니다.")
     print(f"  멈추려면 Ctrl-Q.\n")
 
     loop.mode = Mode.CONTROL
@@ -290,6 +289,7 @@ def cmd_zero(args, leg: Leg, loop: ControlLoop) -> int:
     print(f"\n{leg.id} 영자세 유지 -- {len(joints)}개 관절을 0도로")
     print("  관절 전부가 0도이므로 어긋난 관절이 눈으로 보임.")
     print("  처지면 kp 가 부족하고, 부르르 떨면 kp 가 과함.")
+    print(f"\n  {args.approach:.0f}초에 걸쳐 0도로 옮긴 뒤 그대로 유지합니다.")
 
     return _run(leg, loop, targets, motions.hold(targets), approach_s=args.approach)
 
@@ -315,6 +315,8 @@ def cmd_range(args, leg: Leg, loop: ControlLoop) -> int:
     flat = [name for name, (lo, hi) in inset.items() if hi - lo < 1.0]
     if flat:
         print(f"\n  움직일 폭이 없는 관절: {flat}. 한계가 좁거나 여유가 큼.")
+
+    print(f"\n  {args.approach:.0f}초에 걸쳐 가운데로 옮긴 뒤 왕복을 시작합니다.")
 
     return _run(
         leg,
