@@ -114,13 +114,51 @@ class ImuConfig:
     `ttyUSB1` 이 붙어 재부팅마다 달라짐.
     """
 
-    baudrate: int = 921600
-    """센서에 저장된 값과 반드시 같아야 함. 다르면 조용히 아무 패킷도 안 들어옴."""
+    baudrate: Optional[int] = None
+    """센서에 저장된 값과 반드시 같아야 함. 다르면 조용히 아무 패킷도 안 들어옴.
+
+    `None` 이면 **벤더 모듈의 기본값**을 씀. 여기 숫자를 하나 박아 두지 않는 이유:
+    출하 기본값이 센서마다 다름 (EBIMU 115200, Xsens MTi 921600). 한쪽 값을 여기
+    기본값으로 두면 다른 쪽 설정에서 이 줄을 생략했을 때 조용히 안 붙음.
+    """
 
     mount: Optional[str] = None
     """어디에 붙었는지. 팔다리 이름이거나 `torso` 처럼 팔다리가 아닌 자리.
 
     `None` 이면 아직 안 정한 것임. 다리에서 몸통으로 옮길 때 **여기 한 줄만** 바뀜.
+    """
+
+    output: Tuple[str, ...] = ("quat", "gyro", "accel")
+    """센서가 보내는 항목. **순서가 곧 패킷 안의 순서임.**
+
+    센서에 저장되는 값이지만 여기가 기준임 -- `huphy-imu apply` 가 이 목록대로
+    센서를 맞춤. 반대로 하면(센서에 물어보고 코드가 따라감) 센서를 갈아 끼울 때마다
+    동작이 조용히 달라짐.
+
+    적어 두어야 하는 이유: 패킷에 **무엇이 켜져 있는지가 안 적혀 있음.** 숫자만
+    오고, 필드 수가 같은 조합이 여럿이라 개수로도 알 수 없음.
+    """
+
+    accel_mode: str = "gravity"
+    """가속도 종류. `gravity` / `local` / `global`.
+
+    `gravity` 는 중력 포함이라 정지 상태에서 중력방향이 그대로 읽힘. **부착 방향
+    검사(`huphy-imu check`)가 이것에 기대므로 바꾸지 말 것.**
+
+    따로 적는 이유: 셋 다 필드 수가 3으로 같아 패킷으로는 구분이 안 됨.
+    """
+
+    dist_mode: str = "local"
+    """거리 기준. `local` 은 센서 축, `global` 은 동서남북.
+
+    다리에 붙은 센서면 `local` 임. 이 값도 필드 수가 같아 패킷으로 구분이 안 됨.
+    """
+
+    rate_hz: float = 100.0
+    """센서 출력 주기. **제어 주기와 맞출 것.**
+
+    센서가 느리면 제어 루프가 같은 값을 두 번 보고, 빠르면 받은 패킷을 버림.
+    센서는 1ms 단위로만 설정되므로 나누어떨어지는 값이어야 함.
     """
 
     def __post_init__(self) -> None:
@@ -130,8 +168,13 @@ class ImuConfig:
             raise ValueError(f"{self.name}: model 이 비어 있음")
         if not self.port:
             raise ValueError(f"{self.name}: port 가 비어 있음")
-        if self.baudrate <= 0:
+        if self.baudrate is not None and self.baudrate <= 0:
             raise ValueError(f"{self.name}: baudrate 는 0보다 커야 함 (받은 값 {self.baudrate})")
+        if not self.output:
+            raise ValueError(f"{self.name}: output 이 비어 있음")
+        if self.rate_hz <= 0:
+            raise ValueError(f"{self.name}: rate_hz 는 0보다 커야 함 (받은 값 {self.rate_hz})")
+        object.__setattr__(self, "output", tuple(self.output))
 
 
 @dataclass(frozen=True)

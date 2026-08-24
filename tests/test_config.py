@@ -403,8 +403,26 @@ class TestImus:
         """IMU 가 없어도 로봇은 돎."""
         assert load_robot(write(BASE)).imus == {}
 
-    def test_default_baudrate(self, write):
-        assert load_robot(write(IMU_YAML)).imus["main"].baudrate == 921600
+    def test_baudrate_is_left_to_the_vendor(self, write):
+        """출하 기본값이 센서마다 달라 여기 숫자를 박아 두지 않음.
+
+        한쪽 값을 공용 기본값으로 두면 다른 센서 설정에서 이 줄을 생략했을 때
+        조용히 안 붙음. None 이면 registry 가 벤더 모듈 값을 씀.
+        """
+        assert load_robot(write(IMU_YAML)).imus["main"].baudrate is None
+
+    def test_default_output(self, write):
+        """EBIMU 패킷에는 무엇이 켜져 있는지가 안 적혀 있어 설정이 기준임."""
+        imu = load_robot(write(IMU_YAML)).imus["main"]
+        assert imu.output == ("quat", "gyro", "accel")
+        assert (imu.accel_mode, imu.dist_mode, imu.rate_hz) == ("gravity", "local", 100.0)
+
+    def test_output_accepts_a_comma_string(self, write):
+        """YAML 목록과 뜻이 같음. 손으로 적기 편한 쪽도 받음."""
+        text = IMU_YAML + "    output: quat,gyro,accel,temp\n"
+        assert load_robot(write(text)).imus["main"].output == (
+            "quat", "gyro", "accel", "temp",
+        )
 
     def test_model_is_required(self, write):
         bad = BASE + "\nimus:\n  main:\n    port: /dev/x\n"

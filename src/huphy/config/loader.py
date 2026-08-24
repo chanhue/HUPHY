@@ -33,7 +33,10 @@ LIMB_KEYS = {
     "kind", "side", "channel", "interface", "control_hz", "calibration", "motors",
 }
 MOTOR_KEYS = {"id", "model", "kp", "kd"}
-IMU_KEYS = {"model", "port", "baudrate", "mount"}
+IMU_KEYS = {
+    "model", "port", "baudrate", "mount",
+    "output", "accel_mode", "dist_mode", "rate_hz",
+}
 SAFETY_KEYS = {"command_margin_deg", "max_delta_deg", "enforce_limits"}
 TELEMETRY_KEYS = {"host", "port", "csv_path", "csv_flush_every"}
 
@@ -99,12 +102,23 @@ def _imu(name: str, data: Mapping[str, Any]) -> ImuConfig:
         if required not in data:
             raise ConfigError(f"{where}: {required} 항목이 없음")
 
+    extra = dict(_pick(data, {"baudrate", "mount", "accel_mode", "dist_mode", "rate_hz"}))
+    if "output" in data:
+        # 문자열 하나로 적는 것도 받음 -- `output: quat,gyro,accel` 이 손으로 적기
+        # 편하고, YAML 목록과 뜻이 같음.
+        raw = data["output"]
+        items = raw.split(",") if isinstance(raw, str) else raw
+        try:
+            extra["output"] = tuple(str(item).strip() for item in items)
+        except TypeError as e:
+            raise ConfigError(f"{where}.output: 목록이어야 함 (받은 값 {raw!r})") from e
+
     try:
         return ImuConfig(
             name=name,
             model=str(data["model"]),
             port=str(data["port"]),
-            **_pick(data, {"baudrate", "mount"}),
+            **extra,
         )
     except (TypeError, ValueError) as e:
         raise ConfigError(f"{where}: {e}") from e

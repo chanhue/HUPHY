@@ -15,14 +15,40 @@ from typing import Any, Callable, Dict
 from .base import Imu
 
 
-def _xsens(config: Any) -> Imu:
-    from .xsens import XsensImu  # noqa: PLC0415
+def _baudrate(config: Any, fallback: int) -> int:
+    """설정에 적혀 있으면 그것, 없으면 벤더 출하 기본값.
 
-    return XsensImu(config.name, config.port, baudrate=config.baudrate)
+    출하 기본값이 센서마다 달라 `ImuConfig` 에 숫자를 박아 둘 수 없음 -- 한쪽 값을
+    기본값으로 두면 다른 쪽 설정에서 이 줄을 생략했을 때 조용히 안 붙음.
+    """
+    value = getattr(config, "baudrate", None)
+    return fallback if value is None else int(value)
+
+
+def _xsens(config: Any) -> Imu:
+    from .xsens import DEFAULT_BAUDRATE, XsensImu  # noqa: PLC0415
+
+    # `output` 계열은 안 씀 -- Xsens 는 패킷에 어떤 항목인지가 들어 있어 설정으로
+    # 알려줄 필요가 없음. EBIMU 전용 키가 적혀 있어도 그냥 무시됨.
+    return XsensImu(
+        config.name, config.port, baudrate=_baudrate(config, DEFAULT_BAUDRATE)
+    )
+
+
+def _ebimu(config: Any) -> Imu:
+    from .ebimu import DEFAULT_BAUDRATE, EbimuImu  # noqa: PLC0415
+
+    return EbimuImu(
+        config.name,
+        config.port,
+        baudrate=_baudrate(config, DEFAULT_BAUDRATE),
+        output=config.output,
+    )
 
 
 MODELS: Dict[str, Callable[[Any], Imu]] = {
     "xsens_mti": _xsens,
+    "ebimu": _ebimu,
 }
 """`model` -> 만드는 함수. 키가 곧 `robot.yaml` 에 적는 이름임."""
 
