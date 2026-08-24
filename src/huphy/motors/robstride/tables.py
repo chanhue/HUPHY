@@ -45,6 +45,8 @@ class ControlMode(IntEnum):
 class Model(str, Enum):
     RS00 = "RS00"
     RS02 = "RS02"
+    RS03 = "RS03"
+    RS04 = "RS04"
 
 
 # ---------------------------------------------------------------------------
@@ -84,17 +86,37 @@ class EncodingRange:
 #     Byte5 + Byte6[7:4]    Kd        [0~4096]  <-> (0 ~ 5)
 #     Byte6[3:0] + Byte7    목표토크  [0~4096]  <-> 모델마다 다름 (아래 표)
 MIT_ENCODING: Dict[Model, EncodingRange] = {
-    # 두 모델 다 각 매뉴얼의 Command 3 표로 확인함. 토크 범위만 다름.
+    # 각 모델 매뉴얼의 Command 3 표로 확인함.
     #   RS00  목표토크 [0~4096] <-> (-14 N.m ~ 14 N.m)
     #   RS02  목표토크 [0~4096] <-> (-17 N.m ~ 17 N.m)
-    # 나머지 네 칸(각도·속도·Kp·Kd)은 두 모델이 같음.
+    #   RS03  목표토크 [0~4096] <-> (-60 N.m ~ 60 N.m)
+    #   RS04  목표토크 [0~4096] <-> (-120 N.m ~ 120 N.m)
+    #         목표각   [0~65535] <-> (-15 rad ~ 15 rad)   <- 이 모델만 다름
+    # 속도·Kp·Kd 는 네 모델이 같음 (±33 rad/s, 0~500, 0~5).
     Model.RS00: EncodingRange(pmax_rad=12.57, vmax_rad_s=33.0, tmax_nm=14.0),
     Model.RS02: EncodingRange(pmax_rad=12.57, vmax_rad_s=33.0, tmax_nm=17.0),
+    Model.RS03: EncodingRange(pmax_rad=12.57, vmax_rad_s=33.0, tmax_nm=60.0),
+    Model.RS04: EncodingRange(pmax_rad=15.0, vmax_rad_s=33.0, tmax_nm=120.0),
 }
 """**모델마다 다름.** 같은 정수를 서로 다른 Nm 으로 되돌리므로, 표가 틀리면 그
 비율만큼 토크가 어긋남 -- 프레임에는 Nm 이 아니라 범위 안의 눈금만 실림.
 
-발목이 RS00, 나머지가 RS02 라 한 다리 안에서도 갈림.
+한 다리 안에서도 갈림.
+
+    0.5   발목이 RS00, 나머지가 RS02
+    1.0   hip_yaw 와 발목이 RS03, 나머지가 RS04
+
+**RS04 의 `pmax_rad` 는 확인이 필요함.** 매뉴얼 Command 3 표에 `-15 rad ~ 15 rad`
+로 적혀 있는데, 나머지 세 모델은 전부 `12.57`(= 4π)이고 RS04 의 private 프로토콜
+쪽 정의도 `12.57` 임. **같은 매뉴얼 안에서 두 값이 갈림.**
+
+15.0 은 RS04 의 속도 상한(`V_MAX 15.0`)과 같은 숫자라, 표를 옮기면서 속도 칸 값이
+각도 칸에 들어간 오기일 가능성이 있음. 틀렸다면 명령한 각도가 `15/12.57 = 1.19` 배로
+어긋남 -- 30도를 명령하면 약 35.8도가 나감.
+
+지금은 **MIT 표에 적힌 값을 그대로 씀.** 우리가 쓰는 것이 MIT 프로토콜이고, 그
+프로토콜의 표가 1차 출처이기 때문임. 실물에서 `commission nudge` 로 명령한 각도와
+보고된 각도를 대조해 확인할 것.
 """
 
 # private 프로토콜 (29-bit 확장 프레임)
@@ -108,6 +130,17 @@ MIT_ENCODING: Dict[Model, EncodingRange] = {
 PRIVATE_ENCODING: Dict[Model, EncodingRange] = {
     Model.RS02: EncodingRange(
         pmax_rad=12.57, vmax_rad_s=44.0, tmax_nm=17.0, vel_bits=16, tau_bits=16
+    ),
+    # RS03·RS04 는 **게인 범위까지 다름** -- Kp 가 10배, Kd 가 20배임.
+    # private 값을 MIT 프레임에 넣으면 게인이 1/10 로 들어가고, 반대면 10배로
+    # 들어감. 이 축을 없애면 그 실수가 남음.
+    Model.RS03: EncodingRange(
+        pmax_rad=12.57, vmax_rad_s=20.0, tmax_nm=60.0,
+        kp_max=5000.0, kd_max=100.0, vel_bits=16, tau_bits=16,
+    ),
+    Model.RS04: EncodingRange(
+        pmax_rad=12.57, vmax_rad_s=15.0, tmax_nm=120.0,
+        kp_max=5000.0, kd_max=100.0, vel_bits=16, tau_bits=16,
     ),
 }
 
