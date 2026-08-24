@@ -21,9 +21,37 @@
 
 ```bash
 sudo apt install -y can-utils
-sudo ip link set can1 up type can bitrate 1000000
-ip -details link show can1                       # state UP 이 보여야 함
 ```
+
+### 채널 올리기
+
+**어댑터 종류에 따라 다름.** 속도를 어디서 정하느냐가 갈림길임.
+
+```bash
+# USB 어댑터 (CANable 등) -- 속도를 어댑터가 들고 있음
+sudo slcand -o -c -s8 /dev/canable0 can1
+sudo ip link set can1 up
+
+# 네이티브 CAN (HAT, MCP2515) -- 속도를 커널이 들고 있음
+sudo ip link set can1 up type can bitrate 1000000
+```
+
+`-s8` 이 **1 Mbps** 임. 모터 출하 기본값이 1 Mbps 라 이대로 맞음.
+
+USB 쪽은 `can1` 이 **찾는 이름이 아니라 짓는 이름**임 -- `slcand` 마지막 인자가
+만들어낼 장치 이름이고, `config/robot.yaml` 의 `channel` 과 같아야 함. 네이티브
+쪽은 부팅할 때 드라이버가 이미 만들어 두므로 골라 쓸 수 없음.
+
+```bash
+ip -br link show type can        # 지금 뭐가 있나
+ip -details link show can1       # state UP 이 보여야 함
+```
+
+`/dev/canable0` 은 udev 로 고정한 심볼릭 링크임. USB 는 꽂는 순서대로 `ttyACM0`,
+`ttyACM1` 이 붙어 재부팅마다 달라짐. 자세한 것은 루트
+[README](../README.md) 4번.
+
+### 한 대씩
 
 **모터를 한 대만 물릴 것.** 출하 상태는 전부 같은 id 라, 여러 대를 물리면 명령이
 양쪽에 다 가고 응답도 같이 나와서 어느 쪽인지 구분이 안 됨. 그 상태가 되면 선을
@@ -310,8 +338,9 @@ RS02 설정으로 RS04 를 돌리면 시킨 토크의 **7배**가 나감 (120/17
 무릎(id 10) 기준. `0A` 자리를 바꾸면 다른 모터임.
 
 ```bash
-# 채널
-sudo ip link set can1 up type can bitrate 1000000
+# 채널 -- 어댑터에 맞는 쪽 하나만
+sudo slcand -o -c -s8 /dev/canable0 can1 && sudo ip link set can1 up   # USB
+sudo ip link set can1 up type can bitrate 1000000                      # 네이티브
 candump can1 &
 
 # 출하 상태 (private, 확장 프레임)
