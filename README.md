@@ -28,11 +28,10 @@
 
 ## 1. 하드웨어 준비
 
-**하드웨어 버전이 둘임.** 설정 파일이 나뉘어 있고 `config/robot.yaml` 심볼릭 링크가
-지금 쓰는 쪽을 가리킴. 바꾸는 법은 [하드웨어 버전 바꾸기](#하드웨어-버전-바꾸기).
+**하드웨어 버전이 둘임. 어느 쪽인지부터 정할 것.**
 
 ```
-0.5   robot_v0.5.yaml   <- 지금
+0.5   robot_v0.5.yaml
   RobStride RS02 x4    고관절 3, 무릎 1
   RobStride RS00 x2    발목 링키지
 
@@ -40,6 +39,20 @@
   RobStride RS04 x3    hip_pitch, hip_roll, knee
   RobStride RS03 x3    hip_yaw, 발목 2
 ```
+
+`config/robot.yaml` 은 **심볼릭 링크**임. 그 링크가 가리키는 파일이 읽힘.
+
+```bash
+readlink config/robot.yaml                   # 지금 어느 쪽인지
+ln -sf robot_v1.0.yaml config/robot.yaml     # 1.0 으로 바꿈
+ln -sf robot_v0.5.yaml config/robot.yaml     # 0.5 로 바꿈
+```
+
+**모든 명령이 이 링크를 따라감.** 스크립트는 `config/robot.yaml` 이라는 이름 하나만
+찾으므로, 링크만 바꾸면 명령어도 코드도 손댈 것이 없음. 캘리브레이션 파일도 각
+버전의 yaml 이 자기 것을 가리킴.
+
+자세한 것은 [하드웨어 버전 바꾸기](#하드웨어-버전-바꾸기).
 
 공통:
 
@@ -321,6 +334,12 @@ CanBus("can1", interface="socketcan")
 1~4 가 끝났다고 보고, 로봇 앞에서 하는 순서.
 
 각 명령이 무엇인지는 [7번](#7-명령어-목록).
+
+**시작 전에 링크가 맞는지 볼 것.** 여기서부터 나오는 모든 명령이 이것을 따라감.
+
+```bash
+readlink config/robot.yaml      # robot_v0.5.yaml
+```
 
 ```bash
 # a  응답 확인 — 6개 다 응답하나
