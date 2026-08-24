@@ -369,7 +369,7 @@ JOINT_ORDER = ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_pitch", "ankle
 
 ```
 base_ang_vel        3    IMU 각속도 (rad/s)
-projected_gravity   3    중력 방향을 몸체 좌표로
+projected_gravity   3    중력 방향을 몸체 좌표로. IMU 모듈이 만들어 올림
 joint_pos           6    관절 각도 (rad)
 joint_vel           6    (rad/s)
 actions             6    직전 주기에 낸 행동 그대로

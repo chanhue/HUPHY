@@ -157,7 +157,7 @@ YAML 은 줄 번호를 안 알려주지만 경로를 따라가면 바로 찾음.
 ### 상대 경로를 품
 
 ```yaml
-calibration: calibration/right_leg.json
+calibration: calibration/right_leg_v0.5.json
 ```
 
 **`robot.yaml` 이 있는 폴더 기준**으로 절대 경로가 됨. 어디서 실행하든 같은 파일을

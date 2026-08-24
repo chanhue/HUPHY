@@ -103,21 +103,41 @@ right_leg/can/rx_errors      수신 실패
 right_leg/can/drain_timeouts 기대한 응답을 못 채운 횟수
 ```
 
-**IMU — 매 주기** (IMU 하나에 10필드. 붙었을 때만)
+**IMU — 매 주기** (붙었을 때만. **필드 수가 센서마다 다름**)
+
+공통 열은 센서를 바꿔도 같음.
 
 ```
 t
-imu/main/roll                자세 (도)
-imu/main/pitch
-imu/main/yaw
-imu/main/ax                  가속도 (m/s^2). 중력 포함
-imu/main/ay
-imu/main/az
 imu/main/gx                  각속도 (도/초)
 imu/main/gy
 imu/main/gz
-imu/main/age                 마지막 패킷 이후 경과 (ms). 한 번도 없었으면 -1
+imu/main/ax                  가속도 (m/s^2). 중력 포함
+imu/main/ay
+imu/main/az
+imu/main/grav_x              중력방향 단위벡터. 정책에 그대로 들어가는 값
+imu/main/grav_y
+imu/main/grav_z
+imu/main/age                 파싱한 지 얼마나 됐나 (ms). 한 번도 없었으면 -1
 ```
+
+센서 고유 열이 뒤에 붙음. 목록은 구현체의 `extra_fields` 가 냄.
+
+```
+EBIMU   qw qx qy qz  roll pitch yaw  dx dy dz  temp  sensor_ms  sensor_dt
+Xsens   roll pitch yaw  temp  sensor_ms  sensor_dt
+```
+
+`grav_*` 는 **정책이 실제로 본 값**임. 자세가 이상해 보일 때 센서 원본이 이상한
+것인지 중력방향 계산이 이상한 것인지 여기서 갈림.
+
+`sensor_dt` 는 직전 패킷과의 **센서 시각** 차임. 100Hz 면 10이 정상이고, 20이면 한
+개가 빠진 것임. `age` 와 같이 봐야 원인이 좁혀짐.
+
+    sensor_dt 10, age 10       정상
+    sensor_dt 10, age 가 튐    센서는 규칙적인데 우리 스레드가 밀림
+    sensor_dt 20, 30           패킷이 빠지는 중. 선이나 보레이트
+    age 만 자람                센서가 멈춤
 
 **나누는 이유는 패킷 크기임.** 합치면 66필드에 약 1.8 KB 로 MTU 를 넘어 조각남.
 

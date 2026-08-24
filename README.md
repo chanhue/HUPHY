@@ -16,6 +16,7 @@
 - [5. 처음 브링업 순서](#5-처음-브링업-순서) — **여기까지가 세팅**
 - [6. 동작 확인](#6-동작-확인) — 움직여 보기
 - [7. 명령어 목록](#7-명령어-목록) — 참조
+- [하드웨어 버전 바꾸기](#하드웨어-버전-바꾸기)
 - [조정해야 할 값](#조정해야-할-값)
 - [지금 무엇이 비어 있나](#지금-무엇이-비어-있나)
 - [계층 구조](#계층-구조)
@@ -27,13 +28,33 @@
 
 ## 1. 하드웨어 준비
 
+**하드웨어 버전이 둘임.** 설정 파일이 나뉘어 있고 `config/robot.yaml` 심볼릭 링크가
+지금 쓰는 쪽을 가리킴. 바꾸는 법은 [하드웨어 버전 바꾸기](#하드웨어-버전-바꾸기).
+
+```
+0.5   robot_v0.5.yaml   <- 지금
+  RobStride RS02 x4    고관절 3, 무릎 1
+  RobStride RS00 x2    발목 링키지
+
+1.0   robot_v1.0.yaml
+  RobStride RS04 x3    hip_pitch, hip_roll, knee
+  RobStride RS03 x3    hip_yaw, 발목 2
+```
+
+공통:
+
 ```
 라즈베리파이
 CAN 어댑터            USB(CANable 등) 또는 CAN HAT. 다리마다 하나
-RobStride RS02 x4    고관절 3, 무릎 1
-RobStride RS00 x2    발목 링키지
+EBIMU-9DOF           IMU. 시리얼
 24V 전원
 ```
+
+**모델마다 인코딩 범위가 다름.** 토크가 RS00 ±14, RS02 ±17, RS03 ±60,
+RS04 ±120 N·m 이고 RS04 는 각도 범위까지 다름. 프레임에는 N·m 이 아니라 범위 안의
+눈금만 실리므로, 설정의 `model` 이 실물과 다르면 그 비율만큼 토크가 어긋나는데
+프레임도 응답도 정상이라 실물에서 찾기 매우 어려움
+([`docs/motor_setup.md`](docs/motor_setup.md)).
 
 어댑터 종류에 따라 **채널 올리는 방법만** 달라짐 ([4번](#4-can-채널-올리기)).
 코드와 설정은 같음.
@@ -171,7 +192,7 @@ pip install -e ".[imu]"     # + pyserial. IMU 를 붙일 때만
 ### 확인
 
 ```bash
-python -m pytest tests -q          # 901 passed
+python -m pytest tests -q          # 956 passed
 huphy-commission --help
 ```
 
@@ -323,7 +344,7 @@ huphy-test --limb right_leg zero
 huphy-test --limb right_leg range
 ```
 
-b·c·d 의 결과는 `config/calibration/right_leg.json` 에 바로 적힘. 붙여 넣을 것이
+b·c·d 의 결과는 `config/calibration/right_leg_v0.5.json` 에 바로 적힘. 붙여 넣을 것이
 없음. b·c 는 관절을 생략했음 — 목록이 뜨고 골라서 진행함. 관절과 옵션을 다 적어 한 줄로
 치는 형태는 [7번](#7-명령어-목록)에 있음.
 
@@ -699,6 +720,24 @@ huphy-test --limb right_leg range     # 관절마다 최소~최대를 오감
 
 Ctrl-Q 까지 계속함. 자세한 것은 [6번](#6-동작-확인).
 
+### IMU — 센서를 설정하고 확인
+
+```bash
+huphy-imu show          # 센서 설정을 읽어 robot.yaml 과 대조. 안 바꿈
+huphy-imu apply --yes   # [영구] robot.yaml 대로 센서를 맞춤
+huphy-imu check         # 부착 방향을 가속도계와 대조. 안 바꿈
+huphy-imu watch         # 들어오는 값을 계속 보여줌
+```
+
+**설정이 센서 비휘발성 메모리에 저장됨.** 전원을 껐다 켜도 남으므로 `apply` 는
+`--yes` 를 요구함.
+
+`check` 는 **두 축을 동시에 기울여 가만히 둔 상태**에서 실행할 것. 정지 상태의
+가속도계가 중력방향을 직접 재므로, 자세에서 계산한 값과 대조하면 센서가 예상과
+다른 방향으로 붙었는지 드러남. 수평이면 부착이 틀려도 통과하므로 판정을 거부함.
+
+IMU 가 여럿이면 `--imu <이름>` 으로 고름.
+
 ### 공통
 
 ```bash
@@ -706,15 +745,83 @@ Ctrl-Q 까지 계속함. 자세한 것은 [6번](#6-동작-확인).
 -v                 자세한 로그
 ```
 
+`--config` 로 하드웨어 버전을 골라 씀 ([하드웨어 버전 바꾸기](#하드웨어-버전-바꾸기)).
+
+---
+
+## 하드웨어 버전 바꾸기
+
+**설정 파일만 바뀌고 코드는 그대로임.** 스크립트는 현재 폴더부터 위로 올라가며
+`config/robot.yaml` 이라는 **이름 하나만** 찾음.
+
+```
+config/
+├── robot.yaml           -> robot_v0.5.yaml   심볼릭 링크. 지금 쓰는 쪽
+├── robot_v0.5.yaml         RS02 x4 + RS00 x2
+├── robot_v1.0.yaml         RS04 x3 + RS03 x3
+└── calibration/
+    ├── right_leg_v0.5.json     한계 6/6 잼
+    ├── left_leg_v0.5.json      아직 안 잼
+    ├── right_leg_v1.0.json     아직 안 잼
+    └── left_leg_v1.0.json      아직 안 잼
+```
+
+### 바꾸기
+
+```bash
+ln -sf robot_v1.0.yaml config/robot.yaml     # 1.0 으로
+ln -sf robot_v0.5.yaml config/robot.yaml     # 0.5 로
+readlink config/robot.yaml                   # 지금 어느 쪽인지
+```
+
+### 링크를 안 건드리고 한 번만
+
+네 진입점 전부 `--config` 를 받음.
+
+```bash
+huphy-commission --config config/robot_v1.0.yaml --limb right_leg scan
+huphy-bringup    --config config/robot_v1.0.yaml --limb right_leg
+huphy-imu        --config config/robot_v1.0.yaml show
+huphy-test       --config config/robot_v1.0.yaml --limb right_leg zero
+```
+
+### 실측값은 같이 못 씀
+
+`sign` / `offset_deg` / `limits_deg` 는 전부 **조립 결과**라 모터를 갈면 무효임.
+그래서 캘리브레이션 파일도 버전마다 따로 있고, 각 `robot_vX.Y.yaml` 이 자기 것을
+가리킴.
+
+파일 이름에 버전이 붙어 있어 **덮어쓸 수 없음** — 1.0 커미셔닝을 하다 0.5 로
+되돌려도 0.5 의 실측값이 그대로 남아 있음.
+
+### 1.0 으로 바꾼 뒤 할 일
+
+1.0 캘리브레이션은 `limits_deg` 가 전부 `null` 인 빈 틀임. `null` 은 "제한 없음" 이
+아니라 **"아직 안 잼"** 이고, 그 상태에서는 `Motor.is_configured` 가 `False` 라
+제어 진입이 막힘.
+
+```
+1  프로토콜을 MIT 로, CAN id 를 7~12 로   docs/motor_setup.md
+2  zero_sta 를 1 로                       2번
+3  huphy-imu apply --yes                  IMU 출력 설정
+4  브링업 순서를 처음부터                  5번
+```
+
+**`model` 이 실물과 다르면 조용히 틀린 토크가 나감.** RS03 은 ±60, RS04 는 ±120 N·m
+이라 RS02(±17) 설정으로 RS04 를 돌리면 시킨 것의 7배가 나감. 프레임도 응답도
+정상이라 실물에서 찾기 매우 어려움.
+
 ---
 
 ## 조정해야 할 값
 
 ### `config/robot.yaml` — 사람이 적는 것
 
+링크가 가리키는 파일임 (`robot_v0.5.yaml` 또는 `robot_v1.0.yaml`).
+
 | 값 | 언제 고치나 | 지금 |
 |---|---|---|
-| `kp` / `kd` | 튜닝할 때 | 오른다리 20 / 1 (튜닝 전 시작값) |
+| `kp` / `kd` | 튜닝할 때 | 0.5 오른다리 20 / 1, 1.0 양다리 10 / 1 (둘 다 튜닝 전) |
 | `command_margin_deg` | 게인을 바꾸면 다시 봄 | 3.0 |
 | `max_delta_deg` | 주기를 바꾸면 다시 봄 | 50.0 |
 | `channel` | 배선이 바뀌면 | `can1` / `can0` |
@@ -732,9 +839,12 @@ Ctrl-Q 까지 계속함. 자세한 것은 [6번](#6-동작-확인).
 
 **프로그램이 씀.** 손으로 고칠 일이 없음.
 
+**버전·다리마다 파일 하나임** (`right_leg_v0.5.json` 등). 모터를 갈면 값이 전부
+무효라 같이 못 씀 ([하드웨어 버전 바꾸기](#하드웨어-버전-바꾸기)).
+
 | 값 | 누가 적나 | 지금 |
 |---|---|---|
-| `limits_deg` | `commission sweep` | 오른다리만 있음 |
+| `limits_deg` | `commission sweep` | 0.5 오른다리만 있음. 나머지 셋은 `null` |
 | `offset_deg` | `commission sweep` | 전부 0.0 (재기 전) |
 | `zero_reference` | `commission zero` | 전부 비어 있음 |
 | `sign` | 설계. 쓰는 코드가 없음 | 전부 1.0 |
@@ -807,6 +917,7 @@ sensors/          모터가 아닌 센서. IMU
    │
    ├─ base.py         ImuState, Imu. 벤더 중립
    ├─ registry.py     model 문자열 -> 구현체
+   ├─ ebimu/          E2BOX EBIMU-9DOF. ASCII 시리얼. 지금 쓰는 것
    └─ xsens/          Xsens MTi. 시리얼 Xbus
    │
 telemetry/        옆에서 관찰. 제어를 방해하지 않음
@@ -829,7 +940,7 @@ telemetry/        옆에서 관찰. 제어를 방해하지 않음
 canbus.py    ← 여기 하나뿐
 ```
 
-그 위는 `CanFrame` 만 다룸. 그래서 **테스트 901개가 `python-can` 없이 돌아감.**
+그 위는 `CanFrame` 만 다룸. 그래서 **테스트 956개가 `python-can` 없이 돌아감.**
 
 ---
 
@@ -1013,6 +1124,8 @@ kept_up    꾸준한 느림.   평균이 목표의 90% 미만
 | [`src/huphy/control/`](src/huphy/control/README.md) | 제어 루프, 게인 튜닝 |
 | [`src/huphy/scripts/`](src/huphy/scripts/README.md) | 터미널 진입점 |
 | [`tests/`](tests/README.md) | 무엇을 고정했나 |
+| [`docs/motor_setup.md`](docs/motor_setup.md) | 모터 초기 설정. CAN id, 통신 프로토콜, 인코딩 범위 |
+| [`docs/cycle.md`](docs/cycle.md) | 한 주기. 값이 어떤 모양으로 어디를 지나나 |
 | [`docs/issues.md`](docs/issues.md) | 미해결 항목과 근거 |
 
 ---
@@ -1024,7 +1137,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 
 ```
-901 passed in 16.6s
+956 passed in 18.2s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**

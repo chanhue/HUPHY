@@ -5,8 +5,10 @@
 ```
 architecture.md    계층과 의존 방향. 왜 그렇게 나눴나
 flow_diagrams.md   누가 누구를 부르나. 그림
+cycle.md           한 주기. 값이 어떤 모양으로 어디를 지나나
 build_log.md       무엇을 어떤 순서로 만들었나. 각 단계의 중점
 issues.md          구현하면서 마주친 판단·미확인 사항
+motor_setup.md     모터 초기 설정. CAN id, 통신 프로토콜, 인코딩 범위
 monitoring.md      무엇을 왜 보는가
 ```
 
@@ -20,9 +22,11 @@ monitoring.md      무엇을 왜 보는가
 | 무슨 값을 고쳐야 하나 | [루트 README](../README.md) · [`config/README.md`](../config/README.md) |
 | 계층이 왜 이렇게 나뉘었나 | [architecture.md](architecture.md) |
 | 이 함수가 어디서 불리나 | [flow_diagrams.md](flow_diagrams.md) |
+| 값이 어떤 모양으로 흘러가나 | [cycle.md](cycle.md) |
 | 왜 이 순서로 만들었나 | [build_log.md](build_log.md) |
 | 이 값이 왜 이렇게 정해졌나 | [issues.md](issues.md) |
 | 그래프에서 무엇을 보나 | [monitoring.md](monitoring.md) |
+| 모터 id·프로토콜을 어떻게 바꾸나 | [motor_setup.md](motor_setup.md) |
 
 ---
 

@@ -98,7 +98,7 @@ scripts/run.py
 
 ```
 모터에서 각도·속도를 읽음 (도, 도/초)        robots/leg.py 의 get_observation
-IMU 에서 각속도·자세를 읽음                   sensors/xsens/imu.py
+IMU 에서 각속도·중력방향을 읽음                sensors/ebimu/imu.py
    ↓
 숫자 24개(또는 26개)로 늘어놓음. 라디안으로 바꿈    control/policy.py
    ↓
@@ -128,7 +128,7 @@ CAN 프레임
 | | 개수 | 무엇 |
 |---|---|---|
 | `base_ang_vel` | 3 | IMU 각속도 (rad/s) |
-| `projected_gravity` | 3 | 중력 방향을 몸체 좌표로. 수평이면 `(0,0,-1)` |
+| `projected_gravity` | 3 | 중력 방향을 몸체 좌표로. 수평이면 `(0,0,-1)`. **IMU 모듈이 만들어 올림** |
 | `joint_pos` | 6 | 관절 각도 (rad) |
 | `joint_vel` | 6 | 관절 각속도 (rad/s) |
 | `actions` | 6 | **직전 주기에 모델이 낸 값 그대로.** 배율 곱하기 전 |

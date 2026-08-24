@@ -8,15 +8,16 @@ tests/
 ├── test_canbus.py          motors/canbus.py            33개
 ├── test_robstride_bus.py   robstride/bus.py            40개
 ├── test_commissioning.py   robstride/commissioning.py  46개
-├── test_config.py          config/                     58개
+├── test_config.py          config/                     60개
 ├── test_calibration.py     calibration/                38개
 ├── test_commission_cli.py  scripts/commission.py       71개
 ├── test_ankle.py           kinematics/ankle.py        165개
 ├── test_leg.py             robots/leg.py               68개
-├── test_sensors.py         sensors/                    21개
-├── test_telemetry.py       telemetry/                  65개
+├── test_sensors.py         sensors/                    31개
+├── test_ebimu.py           sensors/ebimu/              42개
+├── test_telemetry.py       telemetry/                  69개
 ├── test_control.py         control/                    45개
-├── test_policy.py          control/policy.py           30개
+├── test_policy.py          control/policy.py           27개
 ├── test_rsl_rl.py          control/rsl_rl.py           24개
 ├── test_run.py             scripts/run.py              17개
 ├── test_bringup.py         scripts/bringup.py          36개
@@ -32,7 +33,7 @@ PYTHONPATH=src python3 -m pytest tests -q
 ```
 ........................................................................ [ 88%]
 ........................................................................ [100%]
-901 passed in 16.6s
+956 passed in 18.2s
 ```
 
 **하드웨어도 `python-can` 도 필요 없음.**
@@ -61,8 +62,11 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 무릎 m10   -20.65 ~ 74.79
 ```
 
-버스 테스트는 다리 구성 그대로 씀 — RS02 4개(7~10)와 RS00 2개(11, 12)가 한 채널에
-물려 있고 **토크 범위가 다름**(17 vs 14 N·m).
+버스 테스트는 0.5 다리 구성 그대로 씀 — RS02 4개(7~10)와 RS00 2개(11, 12)가 한
+채널에 물려 있고 **토크 범위가 다름**(17 vs 14 N·m).
+
+EBIMU 테스트는 실제 패킷 한 줄을 씀. 15필드이고 자세가 약 `roll 30도, pitch 40도`
+임 — 두 축이 다 기울어져 있어야 부착 검사가 판정할 수 있음.
 
 ---
 
@@ -213,18 +217,33 @@ PYTHONPATH=src python3 -m pytest tests -v          # 이름까지 출력
 | `TestAnkleOutputMode` | 13 | 위치/토크 전환, IK 건너뜀, 시킨 토크 기록 |
 | `TestAnkleVelocity` | 2 | 모터 속도 -> 관절 속도 |
 
-### `test_sensors.py` — 21개
+### `test_sensors.py` — 31개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
-| `TestImuState` | 4 | 모르는 것과 0의 구분, age |
+| `TestImuState` | 6 | 모르는 것과 수평의 구분, age, extra 가 상태마다 따로 |
+| `TestGravity` | 6 | 오일러 경로와 쿼터니언 경로가 같은 값을 냄 |
 | `TestRegistry` | 4 | model 풀기, 만들 때 포트 안 엶 |
 | `TestXsensLifecycle` | 5 | 두 번 열고 닫기, 보드레이트 전달 |
-| `TestXsensRead` | 7 | 단위 변환, 빠진 필드, 멈춘 센서 |
+| `TestXsensRead` | 9 | 단위 변환, 오일러가 extra 로, 빠진 필드, 멈춘 센서 |
 
 리더를 가짜로 갈아 끼움 — `pyserial` 없이 돌아야 함.
 
-### `test_telemetry.py` — 65개
+### `test_ebimu.py` — 42개
+
+| 클래스 | 개수 | 대상 |
+|---|---|---|
+| `TestOutput` | 7 | 자세는 못 끔, 배타 쌍, 패킷 순서, 중복 |
+| `TestCommands` | 5 | 안 쓰는 항목을 끔, 모드 값, 1ms 배수, 위험 명령 |
+| `TestParse` | 12 | 자르는 자리, 개수 불일치는 통째로 버림, 쿼터니언 순서, g -> m/s² |
+| `TestSettings` | 7 | `<cfg>` 읽기, 다른 것만 보냄, 응답에서 데이터 줄 제거 |
+| `TestMountCheck` | 4 | 축 뒤집힘 검출, 수평이면 판정 거부, 가속도계 부호 규약 |
+| `TestEbimuImu` | 7 | 필드 수 불일치면 연결 중단, 오일러 출력 거부 |
+
+**개수가 안 맞는 줄은 통째로 버림.** 앞에서부터 채우면 항목 하나가 빠졌을 때 뒤가
+한 칸씩 당겨져 각속도 자리에 가속도가 들어가는데, 값이 그럴듯해서 실물에서 안 잡힘.
+
+### `test_telemetry.py` — 69개
 
 | 클래스 | 개수 | 대상 |
 |---|---|---|
