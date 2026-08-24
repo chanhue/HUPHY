@@ -525,24 +525,40 @@ class TestAnkleJointFields:
 # IMU — 붙었을 때만 나감
 # ===========================================================================
 class FakeImu:
+    """오일러를 주는 센서. 고유 값 목록이 벤더마다 다름."""
+
+    extra_fields = ("roll", "pitch", "yaw", "temp", "sensor_ms")
+
     def __init__(self, name="main"):
         self.name = name
 
     def read(self):
         return ImuState(
-            roll_deg=1.0, pitch_deg=2.0, yaw_deg=3.0,
+            gravity=(0.1, -0.2, -0.97),
             accel_mps2=(0.0, 0.0, 9.81),
             gyro_dps=(4.0, 5.0, 6.0),
-            temp_c=31.5,
+            extra={"roll": 1.0, "pitch": 2.0, "yaw": 3.0,
+                   "temp": 31.5, "sensor_ms": 1000.0},
             stamp=time.monotonic(),
             is_valid=True,
         )
 
 
+class QuatImu(FakeImu):
+    """쿼터니언을 주는 센서. 고유 열이 다름."""
+
+    extra_fields = ("qw", "qx", "qy", "qz", "temp")
+
+    def read(self):
+        state = super().read()
+        state.extra = {"qw": 0.9, "qx": 0.1, "qy": 0.2, "qz": 0.3, "temp": 31.5}
+        return state
+
+
 class ImuRobot(FakeRobot):
-    def __init__(self, imus=("main",), **kwargs):
+    def __init__(self, imus=("main",), kind=FakeImu, **kwargs):
         super().__init__(**kwargs)
-        self.imus = tuple(FakeImu(n) for n in imus)
+        self.imus = tuple(kind(n) for n in imus)
 
     def imu_states(self):
         return {imu.name: imu.read() for imu in self.imus}
@@ -556,8 +572,8 @@ class TestImuFields:
     def test_the_imu_name_is_prefixed_not_the_limb(self):
         """다리에서 몸통으로 옮겨도 필드 이름이 그대로여야 함."""
         names = snapshot.field_names(ImuRobot())
-        assert "imu/main/roll" in names
-        assert "right_leg/imu/roll" not in names
+        assert "imu/main/gx" in names
+        assert "right_leg/imu/gx" not in names
 
     def test_build_matches_the_field_names(self):
         imu_robot = ImuRobot()
@@ -571,10 +587,36 @@ class TestImuFields:
         assert row["imu/main/az"] == 9.81
         assert row["imu/main/gz"] == 6.0
 
+    def test_the_gravity_the_policy_saw_is_recorded(self):
+        """자세가 이상할 때 센서 원본과 중력방향 계산 중 어느 쪽인지 갈림."""
+        row = snapshot.build_imu(ImuRobot(), t=0.0)
+        assert (row["imu/main/grav_x"], row["imu/main/grav_y"], row["imu/main/grav_z"]) == (
+            pytest.approx(0.1), pytest.approx(-0.2), pytest.approx(-0.97)
+        )
+
+    def test_common_columns_are_the_same_for_every_sensor(self):
+        """센서를 바꿔도 공통 열은 그대로여야 예전 그래프 레이아웃이 맞음."""
+        euler = {n for n in snapshot.field_names(ImuRobot())}
+        quat = {n for n in snapshot.field_names(ImuRobot(kind=QuatImu))}
+        common = {f"imu/main/{f}" for f in snapshot.IMU_FIELDS}
+        assert common <= euler and common <= quat
+
+    def test_vendor_columns_differ(self):
+        """고유 열은 센서가 정함. extra_fields 가 목록을 냄."""
+        quat = set(snapshot.field_names(ImuRobot(kind=QuatImu)))
+        assert "imu/main/qw" in quat
+        assert "imu/main/roll" not in quat
+
+    def test_sensor_dt_is_emitted_when_the_sensor_stamps(self):
+        """패킷 손실은 age 로 안 잡힘. 센서 시각 증가량으로 드러남."""
+        names = snapshot.field_names(ImuRobot())
+        assert "imu/main/sensor_dt" in names
+        assert "imu/main/sensor_dt" not in snapshot.field_names(ImuRobot(kind=QuatImu))
+
     def test_several_imus_each_get_a_group(self):
         names = snapshot.field_names(ImuRobot(imus=("main", "foot")))
-        assert "imu/main/roll" in names
-        assert "imu/foot/roll" in names
+        assert "imu/main/gx" in names
+        assert "imu/foot/gx" in names
 
     def test_a_silent_imu_still_emits_keys(self):
         """키가 사라지면 그래프가 끊기고 CSV 열이 밀림."""
@@ -585,6 +627,7 @@ class TestImuFields:
         row = snapshot.build_imu(Silent(), t=0.0)
         assert row["imu/main/roll"] == 0.0
         assert row["imu/main/age"] == -1.0
+        assert row["imu/main/sensor_dt"] == -1.0
 
     def test_a_broken_imu_does_not_stop_recording(self):
         class Broken(ImuRobot):

@@ -459,14 +459,17 @@ class FakeImu:
     def disconnect(self):
         self.connected = False
 
+    extra_fields = ("roll", "pitch", "yaw")
+
     def read(self):
-        from huphy.sensors.base import ImuState
+        from huphy.sensors.base import ImuState, gravity_from_euler
         import time
 
         if not self.valid:
             return ImuState()
         return ImuState(
-            roll_deg=1.5, pitch_deg=-2.5, yaw_deg=30.0,
+            gravity=gravity_from_euler(1.5, -2.5),
+            extra={"roll": 1.5, "pitch": -2.5, "yaw": 30.0},
             stamp=time.monotonic(), is_valid=True,
         )
 

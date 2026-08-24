@@ -129,9 +129,12 @@ class FakeImu:
     def disconnect(self):
         self.connected = False
 
+    extra_fields = ("roll", "pitch", "yaw")
+
     def read(self):
-        return ImuState(roll_deg=0.0, pitch_deg=0.0, yaw_deg=0.0,
-                        gyro_dps=(0.0, 0.0, 0.0), stamp=1.0, is_valid=True)
+        return ImuState(gravity=(0.0, 0.0, -1.0), gyro_dps=(0.0, 0.0, 0.0),
+                        extra={"roll": 0.0, "pitch": 0.0, "yaw": 0.0},
+                        stamp=1.0, is_valid=True)
 
 
 @pytest.fixture

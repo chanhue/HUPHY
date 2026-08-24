@@ -100,16 +100,41 @@ ANKLE_JOINT_FIELDS = ("pos", "tgt", "err", "vel")
 생각하므로 그 축을 같이 냄.
 """
 
-IMU_FIELDS = ("roll", "pitch", "yaw", "ax", "ay", "az", "gx", "gy", "gz", "age")
-"""IMU 하나가 내는 값.
+IMU_FIELDS = ("gx", "gy", "gz", "ax", "ay", "az", "grav_x", "grav_y", "grav_z", "age")
+"""**모든 IMU 가 내는 값.** 센서를 바꿔도 이 열은 그대로임.
 
-    roll pitch yaw   자세 (도)
-    ax ay az         가속도 (m/s^2). 중력 포함
-    gx gy gz         각속도 (도/초)
-    age              마지막 패킷 이후 경과 (ms). 한 번도 못 받았으면 -1
+    gx gy gz            각속도 (도/초)
+    ax ay az            가속도 (m/s^2). 중력 포함
+    grav_x/y/z          중력방향 단위벡터. 정책에 그대로 들어가는 값
+    age                 파싱한 지 얼마나 됐나 (ms). 한 번도 못 받았으면 -1
 
-`age` 가 있는 이유는 모터의 `age` 와 같음 — 값이 언제 것인지 모르면 센서가 멈춘
-것을 알 수 없음. 자세는 멈춰도 그럴듯한 숫자로 남아 있음.
+`grav_*` 를 내는 이유: **정책이 실제로 본 값**임. 자세가 이상해 보일 때 센서 원본이
+이상한 것인지 중력방향 계산이 이상한 것인지 여기서 갈림.
+
+센서 고유 값(오일러, 쿼터니언, 거리, 온도 등)은 `Imu.extra_fields` 로 따로 붙음 --
+아래 `_imu_extra` 참조.
+"""
+
+IMU_MISSING_IS_MINUS_ONE = ("age", "sensor_dt", "sensor_ms")
+"""값이 없을 때 0 이 아니라 -1 로 내보내는 필드.
+
+나머지는 0 이 "아직 모름" 으로 읽혀도 무해하지만, 이 셋은 0 이 **"방금 받았다"** 는
+뜻이라 정반대가 됨.
+"""
+
+SENSOR_DT_FIELD = "sensor_dt"
+"""직전 패킷과의 센서 시각 차 (ms). 센서가 `sensor_ms` 를 낼 때만 붙음.
+
+**패킷 손실이 여기서 드러남.** 100Hz 라면 10 이 정상이고 20 이면 한 개가 빠진 것임.
+`age` 는 이걸 못 잡음 -- 빠진 패킷은 흔적 없이 사라지고, 다음 패킷이 제때 오면
+`age` 는 정상으로 보임.
+
+`age` 와 같이 봐야 원인이 좁혀짐.
+
+    sensor_dt 10, age 10       정상
+    sensor_dt 10, age 가 튐    센서는 규칙적인데 우리 스레드가 밀림
+    sensor_dt 20, 30           패킷이 빠지는 중. 선이나 보레이트
+    age 만 자람                센서가 멈춤
 """
 
 FAST_GLOBAL = ("t", "loop_dt")
@@ -162,8 +187,12 @@ def imu_field_names(robot: Any) -> Tuple[str, ...]:
     예전 로그·그래프 레이아웃과 안 맞음.
     """
     names = ["t"]
-    for imu_name in _imu_names(robot):
-        names.extend(f"imu/{imu_name}/{f}" for f in IMU_FIELDS)
+    for imu in getattr(robot, "imus", ()):
+        head = f"imu/{imu.name}"
+        names.extend(f"{head}/{f}" for f in IMU_FIELDS)
+        names.extend(f"{head}/{f}" for f in _extra_fields(imu))
+        if "sensor_ms" in _extra_fields(imu):
+            names.append(f"{head}/{SENSOR_DT_FIELD}")
     return tuple(names)
 
 
@@ -282,23 +311,66 @@ def build_imu(robot: Any, *, t: float) -> Dict[str, float]:
     states = _imu_states(robot)
     now = time.monotonic()
 
-    for imu_name in _imu_names(robot):
-        state = states.get(imu_name)
-        head = f"imu/{imu_name}"
+    for imu in getattr(robot, "imus", ()):
+        head = f"imu/{imu.name}"
+        extra_names = _extra_fields(imu)
+        state = states.get(imu.name)
+
         if state is None:
-            for field in IMU_FIELDS:
-                out[f"{head}/{field}"] = -1.0 if field == "age" else 0.0
+            for field in IMU_FIELDS + extra_names:
+                out[f"{head}/{field}"] = _blank(field)
+            if "sensor_ms" in extra_names:
+                out[f"{head}/{SENSOR_DT_FIELD}"] = -1.0
             continue
 
-        accel = state.accel_mps2
-        gyro = state.gyro_dps
-        out[f"{head}/roll"] = float(state.roll_deg)
-        out[f"{head}/pitch"] = float(state.pitch_deg)
-        out[f"{head}/yaw"] = float(state.yaw_deg)
-        out[f"{head}/ax"], out[f"{head}/ay"], out[f"{head}/az"] = (float(v) for v in accel)
-        out[f"{head}/gx"], out[f"{head}/gy"], out[f"{head}/gz"] = (float(v) for v in gyro)
+        out[f"{head}/gx"], out[f"{head}/gy"], out[f"{head}/gz"] = (
+            float(v) for v in state.gyro_dps
+        )
+        out[f"{head}/ax"], out[f"{head}/ay"], out[f"{head}/az"] = (
+            float(v) for v in state.accel_mps2
+        )
+        out[f"{head}/grav_x"], out[f"{head}/grav_y"], out[f"{head}/grav_z"] = (
+            float(v) for v in state.gravity
+        )
         out[f"{head}/age"] = float(state.age_ms(now))
+
+        # 센서 고유 값. 이번 주기에 없어도 키는 냄 -- 열이 사라지면 CSV 가 밀림.
+        for field in extra_names:
+            out[f"{head}/{field}"] = float(state.extra.get(field, _blank(field)))
+        if "sensor_ms" in extra_names:
+            out[f"{head}/{SENSOR_DT_FIELD}"] = _sensor_dt(
+                imu.name, out[f"{head}/sensor_ms"]
+            )
     return out
+
+
+def _blank(field: str) -> float:
+    """값이 없을 때 낼 숫자."""
+    return -1.0 if field in IMU_MISSING_IS_MINUS_ONE else 0.0
+
+
+def _extra_fields(imu: Any) -> Tuple[str, ...]:
+    """이 센서가 내는 고유 값의 키 목록. 안 내면 빈 것.
+
+    `Imu` 계약의 일부지만 없어도 동작하게 둠 -- 테스트의 가짜 IMU 나 아주 단순한
+    구현이 이것까지 갖추도록 강요할 이유가 없음.
+    """
+    return tuple(getattr(imu, "extra_fields", ()))
+
+
+_LAST_SENSOR_MS: Dict[str, float] = {}
+"""IMU 이름 -> 직전에 본 `sensor_ms`. `sensor_dt` 를 내려고 들고 있음."""
+
+
+def _sensor_dt(imu_name: str, sensor_ms: float) -> float:
+    """직전 패킷과의 센서 시각 차 (ms). 센서가 시각을 안 주면 -1."""
+    if sensor_ms < 0:
+        return -1.0
+    previous = _LAST_SENSOR_MS.get(imu_name)
+    _LAST_SENSOR_MS[imu_name] = float(sensor_ms)
+    if previous is None:
+        return -1.0
+    return float(sensor_ms) - previous
 
 
 def build(robot: Any, *, t: float, loop_dt_ms: float = 0.0) -> Dict[str, float]:

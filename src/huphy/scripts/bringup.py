@@ -231,20 +231,29 @@ def show_imus(leg: Leg) -> None:
 
     **`마지막 값` 이 진짜 신호임.** 센서가 멈춰도 자세는 그럴듯한 숫자로 남아
     있어서, 값만 보면 살아 있는지 알 수 없음.
+
+    자세를 도로 보여줌. 센서가 쿼터니언을 주더라도 벤더 모듈이 `extra` 에 오일러를
+    같이 넣으므로 여기서 계산하지 않음 -- 없으면 그 칸만 비움.
     """
     if not leg.imus:
         return
 
     print("\n  " + table.header(
-        ("IMU", 10, "<"), ("roll", 9), ("pitch", 9), ("yaw", 9), ("마지막 값", 12),
+        ("IMU", 10, "<"), ("roll", 9), ("pitch", 9), ("yaw", 9),
+        ("중력", 22), ("마지막 값", 12),
     ))
     for name, state in leg.imu_states().items():
         if not state.is_valid:
             print(f"  {name:<10} {table.cell('응답 없음', 9)}")
             continue
+        angles = "".join(
+            f"{state.extra[axis]:9.2f}" if axis in state.extra else table.cell("-", 9)
+            for axis in ("roll", "pitch", "yaw")
+        )
+        gravity = "({:6.3f},{:6.3f},{:6.3f})".format(*state.gravity)
         print(
-            f"  {name:<10} {state.roll_deg:9.2f} {state.pitch_deg:9.2f} "
-            f"{state.yaw_deg:9.2f} {table.cell(_age_text(state.age_ms()), 12)}"
+            f"  {name:<10}{angles} {table.cell(gravity, 22)}"
+            f"{table.cell(_age_text(state.age_ms()), 12)}"
         )
 
 

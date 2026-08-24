@@ -20,9 +20,8 @@ from huphy.control.policy import (
     joint_targets,
     observation_vector,
     policy_motion,
-    projected_gravity,
 )
-from huphy.sensors.base import ImuState
+from huphy.sensors.base import ImuState, gravity_from_euler
 
 
 def observation(**over):
@@ -35,8 +34,8 @@ def observation(**over):
 
 
 def imu(**over):
-    values = {"roll_deg": 0.0, "pitch_deg": 0.0, "yaw_deg": 0.0,
-              "gyro_dps": (0.0, 0.0, 0.0), "is_valid": True}
+    """센서 모듈이 이미 중력방향을 만들어 올린 상태임."""
+    values = {"gravity": (0.0, 0.0, -1.0), "gyro_dps": (0.0, 0.0, 0.0), "is_valid": True}
     values.update(over)
     return ImuState(**values)
 
@@ -97,27 +96,24 @@ class TestObservationVector:
 
 # ===========================================================================
 # 중력 투영
+#
+# 계산 자체는 sensors/base.py 에 있고 test_sensors.py 가 확인함. 여기서는
+# **정책이 그 값을 그대로 쓰는지**만 봄 -- 센서가 어떤 형식으로 받았는지 정책은
+# 몰라야 함.
 # ===========================================================================
 class TestProjectedGravity:
-    def test_level_points_down(self):
-        assert projected_gravity(0.0, 0.0) == pytest.approx((0.0, 0.0, -1.0))
+    def test_it_goes_into_the_vector_unchanged(self):
+        got = observation_vector(
+            observation(), imu(gravity=(0.1, -0.2, -0.97)), [0.0] * ACTION_DIM, spec=BALANCE
+        )
+        assert got[3:6] == pytest.approx((0.1, -0.2, -0.97))
 
-    def test_it_is_a_unit_vector(self):
-        for roll, pitch in [(0, 0), (30, 0), (0, 45), (20, -35), (-60, 60)]:
-            got = projected_gravity(roll, pitch)
-            assert math.sqrt(sum(v * v for v in got)) == pytest.approx(1.0)
-
-    def test_pitch_tips_it_into_x(self):
-        got = projected_gravity(0.0, 30.0)
-        assert got[0] == pytest.approx(math.sin(math.radians(30.0)))
-
-    def test_roll_tips_it_into_y(self):
-        got = projected_gravity(30.0, 0.0)
-        assert got[1] == pytest.approx(-math.sin(math.radians(30.0)))
-
-    def test_yaw_does_not_matter(self):
-        """중력이 z 축이라 z 축 회전으로는 안 바뀜. 인자에도 없음."""
-        assert projected_gravity(10.0, 20.0) == projected_gravity(10.0, 20.0)
+    def test_the_policy_never_sees_the_raw_format(self):
+        """오일러로 받은 센서든 쿼터니언으로 받은 센서든 같은 3칸이 들어감."""
+        state = imu(gravity=gravity_from_euler(10.0, 20.0))
+        state.extra = {"roll": 10.0, "pitch": 20.0, "yaw": 0.0}
+        got = observation_vector(observation(), state, [0.0] * ACTION_DIM, spec=BALANCE)
+        assert got[3:6] == pytest.approx(gravity_from_euler(10.0, 20.0))
 
 
 # ===========================================================================

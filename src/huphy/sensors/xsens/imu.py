@@ -27,7 +27,7 @@ import math
 import time
 from typing import Any, Optional, Tuple
 
-from ..base import ImuState
+from ..base import ImuState, gravity_from_euler
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,13 @@ class XsensImu:
 
     `port` 는 udev 로 고정한 심볼릭 링크를 쓸 것. USB 는 꽂는 순서대로 `ttyUSB0`,
     `ttyUSB1` 이 붙어 **재부팅마다 달라짐.**
+    """
+
+    extra_fields = ("roll", "pitch", "yaw", "temp", "sensor_ms")
+    """텔레메트리로 나가는 Xsens 고유 값.
+
+    자세를 오일러로 받으므로 그대로 냄. EBIMU 는 쿼터니언을 받아 `qw..qz` 를 같이
+    내므로 목록이 다름 -- **센서마다 다른 것이 정상임.**
     """
 
     def __init__(
@@ -144,13 +151,22 @@ class XsensImu:
         gyro_rad = _triple(data.get("rate_of_turn"))
 
         return ImuState(
-            roll_deg=roll,
-            pitch_deg=pitch,
-            yaw_deg=yaw,
-            accel_mps2=_triple(data.get("acceleration")),
+            # 이 센서는 오일러로 냄. 중력방향을 만드는 것은 형식을 아는 이쪽 일임 --
+            # 위 계층은 어느 형식으로 받았는지 모름.
+            gravity=gravity_from_euler(roll, pitch),
             # 센서는 rad/s 로 줌. 프로젝트 전체가 도를 쓰므로 여기서 바꿈.
             gyro_dps=tuple(math.degrees(v) for v in gyro_rad),
-            temp_c=float(data.get("temperature", 0.0)),
+            accel_mps2=_triple(data.get("acceleration")),
+            extra={
+                "roll": roll,
+                "pitch": pitch,
+                "yaw": yaw,
+                "temp": float(data.get("temperature", 0.0)),
+                # SampleTimeFine 은 10kHz 틱임. ms 로 맞춰 올림.
+                "sensor_ms": float(data["sample_time_fine"]) / 10.0
+                if "sample_time_fine" in data
+                else -1.0,
+            },
             stamp=self._stamp,
             is_valid=True,
         )

@@ -14,7 +14,7 @@
 시뮬(mjlab)이 이 순서로 이어 붙임. 가중치 파일의 입력 차원과 맞음.
 
     base_ang_vel        3    IMU 각속도 (rad/s)
-    projected_gravity   3    중력 방향을 몸체 좌표로
+    projected_gravity   3    중력 방향을 몸체 좌표로. IMU 모듈이 만들어 올림
     joint_pos           6    기본 자세 기준 상대 각도 (rad)
     joint_vel           6    (rad/s)
     actions             6    직전 주기에 낸 행동 그대로
@@ -89,20 +89,6 @@ HOPPING = PolicySpec(
 )
 
 
-def projected_gravity(roll_deg: float, pitch_deg: float) -> Tuple[float, float, float]:
-    """중력 단위벡터를 몸체 좌표로. 수평이면 `(0, 0, -1)`.
-
-    yaw 는 영향이 없음 -- 중력이 z 축이라 z 축 회전으로는 안 바뀜.
-
-        g = Rx(-roll) Ry(-pitch) (0, 0, -1)
-          = (sin(pitch), -sin(roll)cos(pitch), -cos(roll)cos(pitch))
-    """
-    roll, pitch = math.radians(roll_deg), math.radians(pitch_deg)
-    return (
-        math.sin(pitch),
-        -math.sin(roll) * math.cos(pitch),
-        -math.cos(roll) * math.cos(pitch),
-    )
 
 
 def hop_phase(t: float, period_s: float) -> Tuple[float, float]:
@@ -135,7 +121,9 @@ def observation_vector(
     # 각속도. IMU 가 도/초로 냄.
     out.extend(math.radians(v) for v in imu_state.gyro_dps)
 
-    out.extend(projected_gravity(imu_state.roll_deg, imu_state.pitch_deg))
+    # 중력방향은 센서 모듈이 이미 만들어 둔 것을 씀. 센서가 오일러를 주든
+    # 쿼터니언을 주든 여기는 모름 -- 형식을 아는 쪽에서 계산해 올림.
+    out.extend(imu_state.gravity)
 
     # 관절 각도·속도. 기본 자세가 전부 0 이라 상대 각도가 곧 각도임.
     out.extend(math.radians(float(observation.get(f"{j}.pos", 0.0))) for j in JOINT_ORDER)

@@ -11,7 +11,13 @@ import types
 import pytest
 
 from huphy.sensors import make_imu
-from huphy.sensors.base import Imu, ImuState
+from huphy.sensors.base import (
+    Imu,
+    ImuState,
+    gravity_from_euler,
+    gravity_from_quat,
+    quat_to_euler,
+)
 from huphy.sensors.registry import MODELS
 
 
@@ -19,11 +25,11 @@ from huphy.sensors.registry import MODELS
 # ImuState
 # ===========================================================================
 class TestImuState:
-    def test_nothing_received_is_not_zero_degrees(self):
-        """값이 0인 것과 모르는 것은 다름. is_valid 로 구분함."""
+    def test_nothing_received_is_not_level(self):
+        """수평인 것과 모르는 것은 다름. is_valid 로 구분함."""
         state = ImuState()
         assert state.is_valid is False
-        assert state.roll_deg == 0.0
+        assert state.gravity == (0.0, 0.0, -1.0)
 
     def test_age_is_minus_one_before_the_first_packet(self):
         """무한대는 JSON 으로 못 보내고 CSV 에서도 읽기 어려움."""
@@ -38,6 +44,71 @@ class TestImuState:
         assert state.accel_mps2 == (0.0, 0.0, 0.0)
         assert state.gyro_dps == (0.0, 0.0, 0.0)
 
+    def test_extra_defaults_to_empty(self):
+        """센서 고유 값. 없는 센서도 있음."""
+        assert ImuState().extra == {}
+
+    def test_each_state_gets_its_own_extra(self):
+        """기본값을 공유하면 한 센서가 넣은 값이 다른 센서에 보임."""
+        first, second = ImuState(), ImuState()
+        first.extra["qw"] = 1.0
+        assert second.extra == {}
+
+
+# ===========================================================================
+# 자세 -> 중력방향
+#
+# 벤더가 어떤 형식으로 받든 위 계층은 gravity 만 봄. 두 식이 같은 값을 내야
+# 센서를 바꿔도 정책이 같게 동작함.
+# ===========================================================================
+class TestGravity:
+    def test_level_points_down(self):
+        assert gravity_from_quat((1.0, 0.0, 0.0, 0.0)) == pytest.approx((0.0, 0.0, -1.0))
+        assert gravity_from_euler(0.0, 0.0) == pytest.approx((0.0, 0.0, -1.0))
+
+    def test_it_is_a_unit_vector(self):
+        import math
+
+        for roll, pitch in [(0, 0), (30, 0), (0, 45), (20, -35), (-60, 60)]:
+            got = gravity_from_euler(roll, pitch)
+            assert math.sqrt(sum(v * v for v in got)) == pytest.approx(1.0)
+
+    def test_pitch_tips_it_into_x(self):
+        import math
+
+        assert gravity_from_euler(0.0, 30.0)[0] == pytest.approx(math.sin(math.radians(30.0)))
+
+    def test_roll_tips_it_into_y(self):
+        import math
+
+        assert gravity_from_euler(30.0, 0.0)[1] == pytest.approx(-math.sin(math.radians(30.0)))
+
+    def test_quaternion_and_euler_agree(self):
+        """오일러를 주는 센서와 쿼터니언을 주는 센서가 같은 값을 내야 함."""
+        quat = (0.9077, 0.2432, 0.3304, -0.0885)
+        roll, pitch, _ = quat_to_euler(quat)
+        assert gravity_from_quat(quat) == pytest.approx(gravity_from_euler(roll, pitch), abs=1e-4)
+
+    def test_yaw_does_not_change_gravity(self):
+        """중력이 z 축이라 z 축 회전으로는 안 바뀜. 오일러 쪽은 인자에도 없음."""
+        import math
+
+        def quat_zyx(roll, pitch, yaw):
+            r, p, y = (math.radians(v) / 2 for v in (roll, pitch, yaw))
+            cr, sr, cp, sp, cy, sy = (
+                math.cos(r), math.sin(r), math.cos(p), math.sin(p), math.cos(y), math.sin(y)
+            )
+            return (
+                cr * cp * cy + sr * sp * sy,
+                sr * cp * cy - cr * sp * sy,
+                cr * sp * cy + sr * cp * sy,
+                cr * cp * sy - sr * sp * cy,
+            )
+
+        straight = gravity_from_quat(quat_zyx(10.0, 20.0, 0.0))
+        turned = gravity_from_quat(quat_zyx(10.0, 20.0, 90.0))
+        assert straight == pytest.approx(turned)
+
 
 # ===========================================================================
 # registry
@@ -47,7 +118,11 @@ class FakeConfig:
         self.name = name
         self.model = model
         self.port = "/dev/null"
-        self.baudrate = 921600
+        self.baudrate = None            # 벤더 기본값을 쓰게 함
+        self.output = ("quat", "gyro", "accel")
+        self.accel_mode = "gravity"
+        self.dist_mode = "local"
+        self.rate_hz = 100.0
 
 
 class TestRegistry:
@@ -151,12 +226,23 @@ class TestXsensRead:
         data.update(extra)
         return data
 
-    def test_euler_becomes_roll_pitch_yaw(self, imu, fake_xbus):
+    def test_euler_goes_to_extra(self, imu, fake_xbus):
+        """원본 형식은 extra 로 감. 위 계층은 gravity 만 봄."""
         imu.connect()
         fake_xbus[0].data = self._packet()
         state = imu.read()
-        assert (state.roll_deg, state.pitch_deg, state.yaw_deg) == (1.0, 2.0, 3.0)
+        assert (state.extra["roll"], state.extra["pitch"], state.extra["yaw"]) == (1.0, 2.0, 3.0)
         assert state.is_valid
+
+    def test_gravity_is_built_from_euler(self, imu, fake_xbus):
+        """형식을 아는 벤더 모듈이 계산해 올림."""
+        imu.connect()
+        fake_xbus[0].data = self._packet()
+        assert imu.read().gravity == pytest.approx(gravity_from_euler(1.0, 2.0))
+
+    def test_extra_fields_are_declared(self, imu):
+        """CSV 헤더를 실행 전에 써야 하므로 목록이 고정이어야 함."""
+        assert set(imu.extra_fields) == {"roll", "pitch", "yaw", "temp", "sensor_ms"}
 
     def test_rate_of_turn_becomes_degrees(self, imu, fake_xbus):
         """센서는 rad/s 로 줌. 프로젝트 전체가 도를 씀."""
