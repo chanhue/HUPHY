@@ -1,0 +1,99 @@
+# 로봇 구성 — 사람이 적는 것.  ** HUPHY 1.0 **
+#
+# 다리 하나. 고관절 pitch/roll 과 무릎이 RS04, hip_yaw 와 발목이 RS03.
+# 0.5 는 robot_v0.5.yaml 에 있음. 지금 쓰는 쪽은 robot.yaml 심볼릭 링크가 가리킴.
+#
+#   ln -sf robot_v1.0.yaml config/robot.yaml
+#
+# 여기 있는 값은 배선과 튜닝에서 옴. 로봇을 만져서 알아내는 값(sign, offset_deg,
+# zero_reference, limits_deg)은 calibration/*.json 에 있음.
+#
+# limits_deg 를 여기 적으면 거부함. 같은 값이 두 군데 생기면 어긋났을 때 어느
+# 쪽이 진짜인지 알 수 없음 (이슈 #2).
+#
+# 벤더 사양(인코딩 범위, 명령 바이트)은 src/huphy/motors/robstride/tables.py 에 있음.
+# 모터 CAN id 와 프로토콜을 바꾸는 절차는 docs/motor_setup.md 에 있음.
+#
+# 각도는 전부 cal 공간임 -- 관절 각도이지 모터가 보고하는 raw 값이 아님.
+
+name: huphy
+
+safety:
+  command_margin_deg: 3.0   # 한계에서 이만큼 안쪽까지만 명령함
+
+  # 0.5(RS02, ±17Nm)에서 쓰던 값임. RS04 는 토크가 7배라 같은 각도 오차에서
+  # 훨씬 큰 힘이 나감. 게인을 튜닝하기 전에 이 값부터 줄여 볼 것.
+  max_delta_deg: 50.0       # 한 주기에 움직일 수 있는 최대 각도
+
+  enforce_limits: true      # false 는 커미셔닝 전용
+
+telemetry:
+  host: 192.168.0.15                # 비우면 UDP 송신 안 함
+  port: 9870
+  csv_path: null
+  csv_flush_every: 50
+
+imus:
+  # 개체 이름이 키이고, 그 이름이 텔레메트리 필드 앞에 붙음 (imu/main/qw).
+  # mount 는 어디 붙었는지임 -- 다리에서 몸통으로 옮기면 이 한 줄만 바뀜.
+  # port 는 udev 로 고정한 심볼릭 링크를 쓸 것. USB 는 순서대로 번호가 붙음.
+  main:
+    model: ebimu
+    port: /dev/ebimu
+    mount: right_leg
+
+    # 센서가 보내는 항목. 순서가 곧 패킷 안의 순서임.
+    # EBIMU 패킷에는 무엇이 켜져 있는지가 안 적혀 있어서 여기 적어 둬야 함.
+    # 센서를 이 목록에 맞추는 것은 huphy-imu apply 가 함.
+    output: [quat, gyro, accel, dist, temp, time]
+
+    # accel/dist 는 값에 따라 뜻이 달라지는데 필드 수가 같아 패킷으로 구분이 안 됨.
+    # gravity 는 중력 포함 -- huphy-imu check 가 이것에 기댐.
+    accel_mode: gravity
+    dist_mode: local
+
+    rate_hz: 100
+
+    # baudrate 를 안 적으면 센서 출하 기본값을 씀 (EBIMU 115200).
+    # baudrate: 230400
+
+limbs:
+  right_leg:
+    kind: leg
+    side: right
+    channel: can1
+    interface: socketcan
+    control_hz: 100.0
+    calibration: calibration/right_leg_v1.0.json
+
+    # 모터를 갈았으므로 0.5 의 실측값을 쓸 수 없음 -- sign/offset/limits 가 전부
+    # 조립 결과라 무효임. limits_deg 가 null 이면 Motor.is_configured 가 False 라
+    # 제어 진입이 막힘. commission 절차를 처음부터 다시 밟을 것 (루트 README 5번).
+    #
+    # kp/kd 는 튜닝 전 시작값임. 0.5 는 20/1 로 시작했는데 RS04 는 토크가 7배라
+    # 절반에서 시작함. 여기서 올리거나 내림 -- 목표를 지나쳤다 돌아오면 kd 가
+    # 부족하고, 못 미치면 kp 가 부족하고, 부르르 떨면 kp 가 과함.
+    # 처음 만질 때는 huphy-bringup --gain-scale 0.1 로 더 낮춰 시작할 것 (이슈 #9).
+    motors:
+      hip_pitch: {id: 7,  model: RS04, kp: 10.0, kd: 1.0}
+      hip_roll:  {id: 8,  model: RS04, kp: 10.0, kd: 1.0}
+      hip_yaw:   {id: 9,  model: RS03, kp: 10.0, kd: 1.0}
+      knee:      {id: 10, model: RS04, kp: 10.0, kd: 1.0}
+      ankle_a:   {id: 11, model: RS03, kp: 10.0, kd: 1.0}
+      ankle_b:   {id: 12, model: RS03, kp: 10.0, kd: 1.0}
+
+  left_leg:
+    kind: leg
+    side: left
+    channel: can0
+    interface: socketcan
+    control_hz: 100.0
+    calibration: calibration/left_leg_v1.0.json
+
+    motors:
+      hip_pitch: {id: 1,  model: RS04, kp: 10.0, kd: 1.0}
+      hip_roll:  {id: 2,  model: RS04, kp: 10.0, kd: 1.0}
+      hip_yaw:   {id: 3,  model: RS03, kp: 10.0, kd: 1.0}
+      knee:      {id: 4,  model: RS04, kp: 10.0, kd: 1.0}
+      ankle_a:   {id: 5,  model: RS03, kp: 10.0, kd: 1.0}
+      ankle_b:   {id: 6,  model: RS03, kp: 10.0, kd: 1.0}

@@ -4,11 +4,52 @@
 
 ```
 config/
-├── robot.yaml              사람이 적는 것
-└── calibration/
-    ├── right_leg.json      조립을 재서 얻는 것
-    └── left_leg.json
+├── robot.yaml           -> robot_v0.5.yaml   심볼릭 링크. 지금 쓰는 쪽
+├── robot_v0.5.yaml         사람이 적는 것. RS02 x4 + RS00 x2
+├── robot_v1.0.yaml         사람이 적는 것. RS04 x3 + RS03 x3
+└── calibration/            조립을 재서 얻는 것. 버전·다리마다 하나
+    ├── right_leg_v0.5.json
+    ├── left_leg_v0.5.json
+    ├── right_leg_v1.0.json
+    └── left_leg_v1.0.json
 ```
+
+---
+
+## 하드웨어 버전을 파일로 나눔
+
+모터가 바뀌면 **한 줄이 아니라 파일 전체가 다른 로봇**이 됨 — 모델, 게인 시작값,
+`max_delta_deg`, 실측값이 전부 갈림. 한 파일에 두고 주석으로 갈라 두면 어느 줄이
+어느 로봇 것인지 매번 세어야 함.
+
+    robot_v0.5.yaml   고관절·무릎 RS02, 발목 RS00
+    robot_v1.0.yaml   hip_pitch/hip_roll/knee RS04, hip_yaw/발목 RS03
+
+**바꾸는 방법은 링크를 다시 거는 것임.**
+
+```bash
+ln -sf robot_v1.0.yaml config/robot.yaml
+```
+
+스크립트는 `config/robot.yaml` 이라는 이름 하나만 찾으므로 코드는 손댈 것이 없음.
+한 번만 다른 쪽으로 돌려 볼 때는 `--config` 로도 됨.
+
+```bash
+huphy-commission --config config/robot_v1.0.yaml --limb right_leg scan
+```
+
+**실측값도 버전마다 나뉨.** `sign`/`offset_deg`/`limits_deg` 가 전부 조립 결과라
+모터를 갈면 무효임. 파일 이름에 버전이 붙어 있어 **덮어쓸 수 없음** — 1.0 커미셔닝을
+하다 중간에 0.5 로 되돌려도 0.5 의 실측값이 그대로 남아 있음.
+
+    robot_v0.5.yaml  ->  calibration/right_leg_v0.5.json   limits 6/6 잼
+                         calibration/left_leg_v0.5.json    아직 안 잼
+    robot_v1.0.yaml  ->  calibration/right_leg_v1.0.json   아직 안 잼
+                         calibration/left_leg_v1.0.json    아직 안 잼
+
+1.0 파일은 `limits_deg` 가 전부 `null` 인 빈 틀임. `null` 은 "제한 없음" 이 아니라
+**"아직 안 잼"** 이고, 그 상태에서는 `Motor.is_configured` 가 `False` 라 제어 진입이
+막힘. `huphy-commission sweep` 이 재서 채움.
 
 ---
 
@@ -76,7 +117,7 @@ limbs:
     channel: can1
     interface: socketcan
     control_hz: 100.0
-    calibration: calibration/right_leg.json
+    calibration: calibration/right_leg_v0.5.json
     motors:
       knee: {id: 10, model: RS02, kp: 20.0, kd: 1.0}
 ```
@@ -97,12 +138,22 @@ limbs:
 | 키 | 뜻 |
 |---|---|
 | `id` | CAN id. 한 채널 안에서 유일해야 함 |
-| `model` | `RS02` 또는 `RS00`. 토크 범위가 다름 (17 vs 14 N·m) |
+| `model` | `RS00` `RS02` `RS03` `RS04`. 인코딩 범위가 다름 (아래) |
 | `kp`, `kd` | MIT 모드에서 매 프레임 실려 나가는 게인 |
 
 **한계각은 여기 없음.** `calibration/*.json` 의 `limits_deg` 임 — `commission sweep`
 이 재서 적음. 여기 적으면 거부함: 같은 값이 두 군데 있으면 어긋났을 때 어느 쪽이
 진짜인지 알 수 없음 (이슈 #2).
+
+`model` 이 실물과 다르면 **조용히 틀린 토크가 나감.** 프레임에는 N·m 이 아니라 범위
+안의 눈금만 실리므로, 표가 다르면 그 비율만큼 어긋나는데 프레임도 응답도 정상임.
+
+```
+RS00  토크 ±14 N·m               RS03  토크 ±60 N·m
+RS02  토크 ±17 N·m               RS04  토크 ±120 N·m, 각도 ±15 rad
+```
+
+RS04 만 각도 범위까지 다름. 자세한 것은 [`docs/motor_setup.md`](../docs/motor_setup.md).
 
 ### `kp` / `kd` 는 튜닝 시작값임
 
@@ -164,11 +215,21 @@ telemetry:
 ```yaml
 imus:
   main:                       # 개체 이름. 텔레메트리 필드 앞에 붙음
-    model: xsens_mti          # sensors/registry.py 의 키
-    port: /dev/xsens_mti      # udev 로 고정한 심볼릭 링크
-    baudrate: 921600          # 센서에 저장된 값과 같아야 함
+    model: ebimu              # sensors/registry.py 의 키
+    port: /dev/ebimu          # udev 로 고정한 심볼릭 링크
     mount: right_leg          # 어디 붙었는지
+    output: [quat, gyro, accel, dist, temp, time]
+    accel_mode: gravity
+    dist_mode: local
+    rate_hz: 100
 ```
+
+`baudrate` 를 안 적으면 **벤더 출하 기본값**을 씀 (EBIMU 115200, Xsens 921600).
+여기 한 숫자를 기본값으로 박아 두면 다른 센서 설정에서 이 줄을 생략했을 때 조용히
+안 붙음.
+
+`output` 계열은 EBIMU 전용임 — **패킷에 무엇이 켜져 있는지가 안 적혀 있어서** 여기
+적어 둬야 함. 센서를 이 목록에 맞추는 것은 `huphy-imu apply` 가 함.
 
 `limbs` 와 나란히 있음. 같은 센서가 다리에 붙었다가 몸통으로 옮겨가므로, 팔다리
 안에 두면 옮길 때 설정 구조와 필드 이름이 같이 바뀜.
@@ -255,10 +316,15 @@ CAN id 는 바뀔 수 있음 (`commissioning.set_can_id`). **관절 자리는 �
 
 ### 현재 상태
 
-| 다리 | 한계 | sign / offset | kp / kd | zero_reference |
-|---|---|---|---|---|
-| right | 채워짐 | 1.0 / 0.0 (재기 전) | 20.0 / 1.0 (튜닝 전) | 비어 있음 |
-| left | 없음 | 재기 전 | 없음 | 비어 있음 |
+| | 다리 | 한계 | sign / offset | kp / kd | zero_reference |
+|---|---|---|---|---|---|
+| 0.5 | right | 채워짐 | 1.0 / 0.0 (재기 전) | 20.0 / 1.0 (튜닝 전) | 비어 있음 |
+| 0.5 | left | 없음 | 재기 전 | 없음 | 비어 있음 |
+| 1.0 | right | 없음 | 재기 전 | 10.0 / 1.0 (튜닝 전) | 비어 있음 |
+| 1.0 | left | 없음 | 재기 전 | 10.0 / 1.0 (튜닝 전) | 비어 있음 |
+
+1.0 의 `kp` 가 0.5 의 절반인 이유: RS04 는 RS02 보다 토크가 7배라 같은 각도 오차에서
+훨씬 큰 힘이 나감.
 
 **지금은 `sign=1, offset=0` 이라 cal 과 raw 가 같은 숫자임.** 어느 쪽으로 해석해도
 동작이 같아서 두 공간을 섞어 써도 드러나지 않음. `commission sweep` 이 `offset_deg`

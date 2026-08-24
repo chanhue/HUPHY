@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "limb": "left_leg",
+  "note": "왼다리 실측값. **1.0 하드웨어용이고 아직 아무것도 재기 전임.** 0.5 의 값을 옮겨 쓸 수 없음 -- sign/offset_deg/limits_deg 는 전부 조립 결과라 모터를 갈면 무효임. limits_deg 가 null 인 것은 '제한 없음' 이 아니라 '아직 안 잼' 이라는 뜻이고, 그 상태에서는 Motor.is_configured 가 False 라 제어 진입이 막힘. zero_reference 는 commission zero 가, limits_deg 와 offset_deg 는 commission sweep 이 적음.",
+  "motors": {
+    "hip_pitch": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": "",
+      "limits_deg": null
+    },
+    "hip_roll": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": "",
+      "limits_deg": null
+    },
+    "hip_yaw": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": "",
+      "limits_deg": null
+    },
+    "knee": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": "",
+      "limits_deg": null
+    },
+    "ankle_a": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": "",
+      "limits_deg": null
+    },
+    "ankle_b": {
+      "sign": 1.0,
+      "offset_deg": 0.0,
+      "zero_reference": "",
+      "limits_deg": null
+    }
+  }
+}
