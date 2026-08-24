@@ -17,6 +17,23 @@
 
 ---
 
+## 빠른 참조
+
+`<DD>` 는 대상 모터 id, **16진수**임. 출하 상태는 `7F`, 부여한 뒤에는 그 id.
+`<NN>` 은 새로 줄 id. 10번은 `0A`, 12번은 `0C`.
+
+```bash
+cansend can1 0000FD<DD>#0000000000000000        # Type 0   호출. 살아 있나
+cansend can1 07<NN>FD<DD>#0000000000000000      # Type 7   id 를 <NN> 으로    즉시
+cansend can1 1200FD<DD>#2970000001000000        # Type 18  zero_sta -> 1     RAM 에만
+cansend can1 1600FD<DD>#0102030405060708        # Type 22  플래시 저장
+cansend can1 1900FD<DD>#0102030405060200        # Type 25  프로토콜 -> MIT    재투입
+```
+
+응답은 `candump -x can1` 의 `RX` 줄만 봄. 자세한 것은 아래 절.
+
+---
+
 ## 1. 전제
 
 ```bash
