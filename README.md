@@ -144,10 +144,11 @@ yaw     Z축 회전    발끝 방향을 돌림
 `cansend` 로 보낼 프레임이 명령 단위로 다 적혀 있음.
 
 ```bash
-cansend can1 070AFD7F#0000000000000000     # CAN id -> 10
-cansend can1 1200FD0A#2970000001000000     # zero_sta -> 1
-cansend can1 1600FD0A#0102030405060708     # 저장
-cansend can1 1900FD0A#0102030405060200     # 프로토콜 -> MIT
+cansend can1 0000FD7F#0000000000000000     # Type 0   지금 id 확인
+cansend can1 070AFD7F#0000000000000000     # Type 7   CAN id -> 10      즉시 적용
+cansend can1 1200FD0A#2970000001000000     # Type 18  zero_sta -> 1     RAM 에만
+cansend can1 1600FD0A#0102030405060708     # Type 22  플래시에 커밋
+cansend can1 1900FD0A#0102030405060200     # Type 25  프로토콜 -> MIT    재투입 필요
 ```
 
 **이 단계에서는 `huphy-commission` 을 못 씀.** 그 도구는 `robot.yaml` 에 적힌 id 로

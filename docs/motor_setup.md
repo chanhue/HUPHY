@@ -82,8 +82,8 @@ ip -details link show can1       # state UP 이 보여야 함
 ## 3. 지금 id 찾기 — Type 0
 
 ```bash
-candump can1 &                                   # 다른 터미널이어도 됨
-cansend can1 0000FD7F#0000000000000000
+candump can1 &                                  # 응답을 계속 지켜봄. 다른 터미널이어도 됨
+cansend can1 0000FD7F#0000000000000000          # Type 0  출하 기본 id(0x7F)에게 "너 누구냐"
 ```
 
 ```
@@ -113,8 +113,8 @@ can1  00007FFE  [8]  41 54 90 07 E8 0C 08 05     <- 응답
 
 ```bash
 for i in $(seq 0 127); do
-  printf -v id "0000FD%02X" $i
-  cansend can1 "$id#0000000000000000"
+  printf -v id "0000FD%02X" $i                  # 마지막 두 자리가 대상 id
+  cansend can1 "$id#0000000000000000"           # Type 0  id 를 0부터 127까지 하나씩 물어봄
   sleep 0.02
 done
 ```
@@ -128,7 +128,7 @@ done
 무릎을 10(`0x0A`)으로:
 
 ```bash
-cansend can1 070AFD7F#0000000000000000
+cansend can1 070AFD7F#0000000000000000          # Type 7  id 0x7F 인 모터의 id 를 0x0A 로
 ```
 
 ```
@@ -150,7 +150,7 @@ can1  00007FFE  [8]  ...                          <- 아직 옛 id. 안 바뀜
 **즉시 적용됨.** 재투입이 필요 없음. 응답을 놓쳤으면 새 id 로 한 번 더 물어봄.
 
 ```bash
-cansend can1 0000FD0A#0000000000000000        # 새 id 로 Type 0
+cansend can1 0000FD0A#0000000000000000          # Type 0  새 id(0x0A)로 다시 물어봄
 ```
 
 `00000AFE` 가 오면 확정임. 안 오면 옛 id(`0000FD7F`)로 물어봄 — 그쪽이 답하면
@@ -177,8 +177,8 @@ cansend can1 0000FD0A#0000000000000000        # 새 id 로 Type 0
 1 로 바꿔야 함 — 안 바꾸면 음수 각도가 340도 같은 값으로 나옴.
 
 ```bash
-cansend can1 1200FD0A#2970000001000000        # 쓰기
-cansend can1 1600FD0A#0102030405060708        # 저장
+cansend can1 1200FD0A#2970000001000000          # Type 18  zero_sta(0x7029) 에 1 을 씀. RAM 에만
+cansend can1 1600FD0A#0102030405060708          # Type 22  플래시에 커밋. 안 하면 재투입 때 사라짐
 ```
 
 ```
@@ -200,7 +200,7 @@ cansend can1 1600FD0A#0102030405060708        # 저장
 읽어서 확인 (Type 17):
 
 ```bash
-cansend can1 1100FD0A#2970000000000000
+cansend can1 1100FD0A#2970000000000000          # Type 17  zero_sta 를 읽어 봄
 ```
 
 응답 `Byte4` 가 `01` 이면 됨.
@@ -210,7 +210,7 @@ cansend can1 1100FD0A#2970000000000000
 ## 6. 프로토콜을 MIT 로 — Type 25
 
 ```bash
-cansend can1 1900FD0A#0102030405060200
+cansend can1 1900FD0A#0102030405060200          # Type 25  프로토콜을 MIT(2) 로. 재투입해야 적용
 ```
 
 ```
@@ -231,7 +231,7 @@ cansend can1 1900FD0A#0102030405060200
 MIT 는 11-bit **표준** 프레임임. 정지 명령(Command 2)을 보내 답하는지 봄.
 
 ```bash
-cansend can1 00A#FFFFFFFFFFFFFFFD
+cansend can1 00A#FFFFFFFFFFFFFFFD               # Command 2  MIT 정지 명령. 표준 프레임(3자리 id)
 ```
 
 ```
@@ -357,20 +357,25 @@ RS02 설정으로 RS04 를 돌리면 시킨 토크의 **7배**가 나감 (120/17
 
 ```bash
 # 채널 -- 어댑터에 맞는 쪽 하나만
-sudo slcand -o -c -s8 /dev/canable0 can1 && sudo ip link set can1 up   # USB
-sudo ip link set can1 up type can bitrate 1000000                      # 네이티브
-candump can1 &
+sudo slcand -o -c -s8 /dev/canable0 can1 && sudo ip link set can1 up  # USB 어댑터
+sudo ip link set can1 up type can bitrate 1000000                     # 네이티브 CAN
+candump can1 &                                  # 응답을 계속 지켜봄
 
-# 출하 상태 (private, 확장 프레임)
-cansend can1 0000FD7F#0000000000000000     # 지금 id 확인
-cansend can1 070AFD7F#0000000000000000     # id -> 10           즉시
-cansend can1 1200FD0A#2970000001000000     # zero_sta -> 1
-cansend can1 1600FD0A#0102030405060708     # 저장
-cansend can1 1900FD0A#0102030405060200     # 프로토콜 -> MIT     재투입 필요
+# 출하 상태 -- private 프로토콜, 29-bit 확장 프레임 (id 8자리)
+cansend can1 0000FD7F#0000000000000000          # Type 0   지금 id 확인      -> 00007FFE
+cansend can1 070AFD7F#0000000000000000          # Type 7   id 를 0x0A 로      즉시 적용
+cansend can1 0000FD0A#0000000000000000          # Type 0   새 id 로 확인      -> 00000AFE
+cansend can1 1200FD0A#2970000001000000          # Type 18  zero_sta -> 1      RAM 에만
+cansend can1 1600FD0A#0102030405060708          # Type 22  플래시에 커밋
+cansend can1 1100FD0A#2970000000000000          # Type 17  zero_sta 읽기      Byte4 = 01 이면 됨
+cansend can1 1900FD0A#0102030405060200          # Type 25  프로토콜 -> MIT     재투입해야 적용
 
 # 전원 재투입
 
-# MIT (표준 프레임)
-cansend can1 00A#FFFFFFFFFFFFFFFD          # 정지. 응답 오면 MIT
-huphy-commission --limb right_leg scan     # 여기서부터 도구가 붙음
+# MIT -- 11-bit 표준 프레임 (id 3자리)
+cansend can1 00A#FFFFFFFFFFFFFFFD               # Command 2  정지. 응답 오면 MIT 임
+huphy-commission --limb right_leg scan          # 여기서부터 저장소 도구가 붙음
 ```
+
+`0A` 자리가 대상 모터 id 임. hip_pitch(id 7)면 `1200FD07`, `1600FD07` 처럼 바뀜.
+`070AFD7F` 만 두 자리를 씀 -- 앞쪽 `0A` 가 새 id, 뒤쪽 `7F` 가 지금 id.
