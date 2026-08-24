@@ -111,6 +111,7 @@ yaw     Z축 회전    발끝 방향을 돌림
 엉뚱한 관절이 움직임.
 
 다르면 둘 중 하나를 고침 — 모터의 id 를 바꾸거나, 설정 파일의 `id` 를 바꾸거나.
+바꾸는 절차는 [`docs/motor_setup.md`](docs/motor_setup.md).
 
 ---
 
@@ -139,19 +140,32 @@ yaw     Z축 회전    발끝 방향을 돌림
 
 ### 어떻게 설정하나
 
-**MotorStudio 같은 외부 도구로 함.** 코드로 읽을 방법이 없음 — 파라미터 접근은
-29-bit 확장 프레임이 필요한데 이 코드는 11-bit 표준 프레임만 보냄
-([이슈 #11](docs/issues.md)).
+**갓 뜯은 모터라면 [`docs/motor_setup.md`](docs/motor_setup.md) 를 따라갈 것.**
+`cansend` 로 보낼 프레임이 명령 단위로 다 적혀 있음.
 
-프로토콜만은 코드로 **바꿀 수는** 있음. 다만 바뀌었는지 확인은 못 함.
+```bash
+cansend can1 070AFD7F#0000000000000000     # CAN id -> 10
+cansend can1 1200FD0A#2970000001000000     # zero_sta -> 1
+cansend can1 1600FD0A#0102030405060708     # 저장
+cansend can1 1900FD0A#0102030405060200     # 프로토콜 -> MIT
+```
+
+**이 단계에서는 `huphy-commission` 을 못 씀.** 그 도구는 `robot.yaml` 에 적힌 id 로
+11-bit 표준 프레임만 보내는데, 출하 상태 모터는 그 id 를 안 쓰고 프레임 형식도 다름.
+
+MotorStudio 로 해도 됨. 파라미터를 화면에서 읽고 쓸 수 있어 확인이 확실함.
+
+**id 가 부여되고 MIT 로 바뀐 뒤부터** 이 저장소 도구가 붙음. 나중에 모터를 교체하면
+그 한 대만 다시 밟으면 됨.
 
 ```bash
 huphy-commission --limb right_leg protocol knee --to mit --yes
 # 전원을 재투입해야 적용됨
 ```
 
-**모터를 교체하거나 추가할 때마다 다시 설정해야 함.** 팔·상체까지 가면 20개가
-넘어가므로 그때는 일괄 확인 방법이 필요해짐.
+바뀌었는지는 코드로 확인 못 함 — 현재 프로토콜은 파라미터 `0x201F` 에 있는데 그
+읽기가 확장 프레임을 필요로 함 ([이슈 #11](docs/issues.md)). 재투입 후 `scan` 이
+응답하면 MIT 임 ([`docs/motor_setup.md`](docs/motor_setup.md) 7절).
 
 ---
 
@@ -1143,7 +1157,7 @@ kept_up    꾸준한 느림.   평균이 목표의 90% 미만
 | [`src/huphy/control/`](src/huphy/control/README.md) | 제어 루프, 게인 튜닝 |
 | [`src/huphy/scripts/`](src/huphy/scripts/README.md) | 터미널 진입점 |
 | [`tests/`](tests/README.md) | 무엇을 고정했나 |
-| [`docs/motor_setup.md`](docs/motor_setup.md) | 모터 초기 설정. CAN id, 통신 프로토콜, 인코딩 범위 |
+| [`docs/motor_setup.md`](docs/motor_setup.md) | 출하 상태 모터를 쓸 수 있게 만들기. 보낼 프레임까지 |
 | [`docs/cycle.md`](docs/cycle.md) | 한 주기. 값이 어떤 모양으로 어디를 지나나 |
 | [`docs/issues.md`](docs/issues.md) | 미해결 항목과 근거 |
 

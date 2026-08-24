@@ -8,7 +8,7 @@ flow_diagrams.md   누가 누구를 부르나. 그림
 cycle.md           한 주기. 값이 어떤 모양으로 어디를 지나나
 build_log.md       무엇을 어떤 순서로 만들었나. 각 단계의 중점
 issues.md          구현하면서 마주친 판단·미확인 사항
-motor_setup.md     모터 초기 설정. CAN id, 통신 프로토콜, 인코딩 범위
+motor_setup.md     출하 상태 모터 세팅. 보낼 프레임까지
 monitoring.md      무엇을 왜 보는가
 ```
 
@@ -26,7 +26,7 @@ monitoring.md      무엇을 왜 보는가
 | 왜 이 순서로 만들었나 | [build_log.md](build_log.md) |
 | 이 값이 왜 이렇게 정해졌나 | [issues.md](issues.md) |
 | 그래프에서 무엇을 보나 | [monitoring.md](monitoring.md) |
-| 모터 id·프로토콜을 어떻게 바꾸나 | [motor_setup.md](motor_setup.md) |
+| 갓 뜯은 모터를 어떻게 세팅하나 | [motor_setup.md](motor_setup.md) |
 
 ---
 
