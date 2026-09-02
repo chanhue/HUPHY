@@ -15,11 +15,7 @@
     data[0:6] = 0xFF    data[6] = F_CMD    data[7] = 명령 코드
 
 **파라미터 읽기·쓰기는 여기 없음.** `PARAM_PROTOCOL_FLAG`(0x201F) 와
-`PARAM_ZERO_STA`(0x7029) 는 private type 17/18 로 접근하므로 29-bit 확장 프레임이
-필요함. `codec/private.py` 가 생기면 그때 추가함.
-
-즉 **하드웨어 전제를 코드로 확인할 수 없음.** 지금은 MotorStudio 같은 외부 도구로
-확인해야 함 (`../README.md` 의 "하드웨어 전제" 참조).
+`PARAM_ZERO_STA`(0x7029) 를 다루는 명령이 아직 없음. 필요해지면 추가함.
 
 
 ## 응답 확인
@@ -166,8 +162,8 @@ def set_protocol(bus: RobStrideBus, motor_id: int, protocol: tables.Protocol) ->
     **안 맞으면 명령이 무시되고 에러도 나지 않음** — 연결도 되고 코드도 안 죽는데
     모터만 안 움직임.
 
-    바뀌었는지는 `PARAM_PROTOCOL_FLAG`(0x201F) 로 확인하는데, 그 파라미터 읽기가
-    private 확장 프레임을 필요로 하므로 지금은 코드로 확인할 수 없음.
+    바뀌었는지 이 함수는 확인하지 않음. 재투입 후 `scan` 이 응답하면 MIT 임 --
+    표준 프레임에 답한다는 것 자체가 근거임.
     """
     if not _send_and_confirm(bus, motor_id, tables.CMD_SET_PROTOCOL, int(protocol)):
         raise CommissioningError(f"m{motor_id}: 프로토콜 전환에 응답이 없음")

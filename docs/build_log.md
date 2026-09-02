@@ -80,7 +80,8 @@ robstride/codec/mit.py    숫자 ↔ 8바이트
 
 ### 인코딩 범위를 "프로토콜 × 모델" 로 둠
 
-같은 RS02 라도 MIT 은 ±33 rad/s, private 은 ±44 rad/s. 이 축이 없으면 private 값을
+당시 판본(`251112`)은 같은 RS02 를 MIT ±33 rad/s, private ±44 rad/s 로 적고
+있었음. 이 축이 없으면 private 값을
 MIT 에 가져다 쓰는 실수가 남 — 틀리면 속도 읽기가 1.33배 어긋남.
 
 없는 조합에 `KeyError` 를 던짐. 조용히 기본값으로 때우면 명령한 값과 실제가 배율만큼

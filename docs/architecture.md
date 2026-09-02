@@ -130,7 +130,7 @@ motors/
 
 | 조합 | 위치 | 속도 | 토크 |
 |---|---|---|---|
-| RS02 / MIT | ±12.57 rad | **±33 rad/s** | ±17 N·m |
+| RS02 / MIT | ±12.57 rad | **±44 rad/s** | ±17 N·m |
 | RS02 / private | ±12.57 rad | **±44 rad/s** | ±17 N·m |
 | RS00 / MIT | ±12.57 rad | ±33 rad/s | ±14 N·m |
 

@@ -3,16 +3,29 @@
 실측이 아님. 모터를 바꾸지 않는 한 변하지 않음.
 실측값(sign/offset/limits/gains)은 calibration/ 으로 감.
 
-출처: RS02 User Manual (Seeed Studio 배포판, 251112)
-  p.20~21  Communication Type 1 / 2         -> private 프로토콜
-  p.27     Motor Function Description       -> zero_sta, 프로토콜 전환
-  p.37~40  MIT Communication Protocol       -> MIT 프로토콜, 명령 목록
+## 출처
+
+제조사 GitHub 의 `260713` 판본임. 모델마다 파일이 따로 있고 절 번호가 같음.
+
+    github.com/RobStride/Product_Information
+      Product Literature/RS00/RS00User Manual260713.pdf
+      Product Literature/RS02/RS02User Manual260713.pdf
+      Product Literature/RS03/RS03User Manual260713.pdf
+      Product Literature/RS04/RS04User Manual260713.pdf
+
+    4.1.2  Communication Type 1 / 2         -> private
+    6.5    Command 3 MIT Dynamic Parameters -> MIT. **여기 값을 씀**
+
+**판본을 확인하고 볼 것.** 예전 판본(Seeed 배포 `251112`, Shopify CDN)은 MIT 표에
+다른 숫자가 적혀 있음 -- RS02 속도가 33, RS04 각도가 15 로 되어 있어 이 표와
+어긋남.
 
 
 ## 인코딩 범위는 "모델별"이 아니라 "프로토콜 x 모델"임
 
-같은 RS02라도 프로토콜에 따라 속도 범위가 다름. 이 축을 없애면 다른 프로토콜의
-값을 가져다 쓰는 실수가 남.
+`260713` 판본에서는 **네 모델 다 두 프로토콜의 범위가 같음.** 축을 남겨 둔 것은
+예전 판본이 다른 값을 적고 있었고, 펌웨어가 어느 쪽을 따르는지 실물로 확인한 적이
+없기 때문임.
 """
 
 from __future__ import annotations
@@ -79,61 +92,60 @@ class EncodingRange:
 
 # MIT 프로토콜 (11-bit 표준 프레임) — 본 프로젝트가 사용
 #
-#   매뉴얼 Command 3 "MIT Dynamic Parameters" (RS02 는 p.38):
+#   매뉴얼 6.5 "Command 3: MIT Dynamic Parameters":
 #     Byte0~1               목표각    [0~65535] <-> (-12.57 rad ~ 12.57 rad)
-#     Byte2 + Byte3[7:4]    목표속도  [0~4096]  <-> (-33 rad/s ~ 33 rad/s)
-#     Byte3[3:0] + Byte4    Kp        [0~4096]  <-> (0 ~ 500)
-#     Byte5 + Byte6[7:4]    Kd        [0~4096]  <-> (0 ~ 5)
-#     Byte6[3:0] + Byte7    목표토크  [0~4096]  <-> 모델마다 다름 (아래 표)
+#     Byte2 + Byte3[7:4]    목표속도  [0~4096]  <-> 모델마다 다름
+#     Byte3[3:0] + Byte4    Kp        [0~4096]  <-> 모델마다 다름
+#     Byte5 + Byte6[7:4]    Kd        [0~4096]  <-> 모델마다 다름
+#     Byte6[3:0] + Byte7    목표토크  [0~4096]  <-> 모델마다 다름
 MIT_ENCODING: Dict[Model, EncodingRange] = {
-    # 각 모델 매뉴얼의 Command 3 표로 확인함.
-    #   RS00  목표토크 [0~4096] <-> (-14 N.m ~ 14 N.m)
-    #   RS02  목표토크 [0~4096] <-> (-17 N.m ~ 17 N.m)
-    #   RS03  목표토크 [0~4096] <-> (-60 N.m ~ 60 N.m)
-    #   RS04  목표토크 [0~4096] <-> (-120 N.m ~ 120 N.m)
-    #         목표각   [0~65535] <-> (-15 rad ~ 15 rad)   <- 이 모델만 다름
-    # 속도·Kp·Kd 는 네 모델이 같음 (±33 rad/s, 0~500, 0~5).
+    #        각도     속도    Kp      Kd     토크
+    #  RS00  ±12.57   ±33     0~500   0~5    ±14 N.m
+    #  RS02  ±12.57   ±44     0~500   0~5    ±17 N.m
+    #  RS03  ±12.57   ±20     0~5000  0~100  ±60 N.m
+    #  RS04  ±12.57   ±15     0~5000  0~100  ±120 N.m
+    #
+    # 각도만 네 모델이 같음. 큰 모터일수록 속도 범위가 좁고 게인 범위가 넓음.
     Model.RS00: EncodingRange(pmax_rad=12.57, vmax_rad_s=33.0, tmax_nm=14.0),
-    Model.RS02: EncodingRange(pmax_rad=12.57, vmax_rad_s=33.0, tmax_nm=17.0),
-    Model.RS03: EncodingRange(pmax_rad=12.57, vmax_rad_s=33.0, tmax_nm=60.0),
-    Model.RS04: EncodingRange(pmax_rad=15.0, vmax_rad_s=33.0, tmax_nm=120.0),
+    Model.RS02: EncodingRange(pmax_rad=12.57, vmax_rad_s=44.0, tmax_nm=17.0),
+    Model.RS03: EncodingRange(
+        pmax_rad=12.57, vmax_rad_s=20.0, tmax_nm=60.0, kp_max=5000.0, kd_max=100.0
+    ),
+    Model.RS04: EncodingRange(
+        pmax_rad=12.57, vmax_rad_s=15.0, tmax_nm=120.0, kp_max=5000.0, kd_max=100.0
+    ),
 }
-"""**모델마다 다름.** 같은 정수를 서로 다른 Nm 으로 되돌리므로, 표가 틀리면 그
-비율만큼 토크가 어긋남 -- 프레임에는 Nm 이 아니라 범위 안의 눈금만 실림.
+"""**모델마다 다름.** 같은 정수를 서로 다른 값으로 되돌리므로, 표가 틀리면 그
+비율만큼 어긋남 -- 프레임에는 Nm 이나 rad 가 아니라 범위 안의 눈금만 실림.
 
 한 다리 안에서도 갈림.
 
     0.5   발목이 RS00, 나머지가 RS02
     1.0   hip_yaw 와 발목이 RS03, 나머지가 RS04
 
-**RS04 의 `pmax_rad` 는 확인이 필요함.** 매뉴얼 Command 3 표에 `-15 rad ~ 15 rad`
-로 적혀 있는데, 나머지 세 모델은 전부 `12.57`(= 4π)이고 RS04 의 private 프로토콜
-쪽 정의도 `12.57` 임. **같은 매뉴얼 안에서 두 값이 갈림.**
+**게인 범위가 제일 위험함.** RS03·RS04 가 `0~5000` / `0~100` 이고 나머지가
+`0~500` / `0~5` 임. 표를 `500` 으로 둔 채 RS04 에 `kp=20` 을 보내면 모터가 `199` 로
+받음 -- 10배임. `kd` 는 20배가 됨.
 
-15.0 은 RS04 의 속도 상한(`V_MAX 15.0`)과 같은 숫자라, 표를 옮기면서 속도 칸 값이
-각도 칸에 들어간 오기일 가능성이 있음. 틀렸다면 명령한 각도가 `15/12.57 = 1.19` 배로
-어긋남 -- 30도를 명령하면 약 35.8도가 나감.
-
-지금은 **MIT 표에 적힌 값을 그대로 씀.** 우리가 쓰는 것이 MIT 프로토콜이고, 그
-프로토콜의 표가 1차 출처이기 때문임. 실물에서 `commission nudge` 로 명령한 각도와
-보고된 각도를 대조해 확인할 것.
+첫 통전에서 다리가 예상보다 세게 튀면 이 표부터 볼 것. `--gain-scale` 로 낮춰도
+비율은 그대로임.
 """
 
-# private 프로토콜 (29-bit 확장 프레임)
+# private 프로토콜 (29-bit 확장 프레임) — 매뉴얼 4.1.2 Communication Type 1
 #
-#   매뉴얼 p.20 Communication Type 1: 속도가 +-44 rad/s (16bit)
-#   무부하 410rpm ~= 43 rad/s 이므로 private은 전 범위를, MIT은 12bit라 +-33으로
-#   잘라 쓰는 것으로 보임.
+# **범위는 MIT 와 같음.** 다른 것은 비트 폭뿐임 -- private 은 토크가 중재 id 안에
+# 들어가고 데이터에 16bit 씩 네 개가 들어가는데, MIT 은 8바이트에 다섯 값을 넣느라
+# 16+12+12+12+12 로 쪼개 씀.
 #
-# 현재 코드는 MIT만 사용하지만, **두 범위가 다르다는 사실 자체가 중요하므로**
-# 표에 남김. 이 축이 없으면 private 값을 MIT에 가져다 쓰는 실수가 남.
+# 현재 코드는 MIT 만 사용함. 이 표는 손으로 확장 프레임을 만들 때(docs/motor_setup.md)
+# 눈금이 같은지 확인하는 용도로 둠.
 PRIVATE_ENCODING: Dict[Model, EncodingRange] = {
+    Model.RS00: EncodingRange(
+        pmax_rad=12.57, vmax_rad_s=33.0, tmax_nm=14.0, vel_bits=16, tau_bits=16
+    ),
     Model.RS02: EncodingRange(
         pmax_rad=12.57, vmax_rad_s=44.0, tmax_nm=17.0, vel_bits=16, tau_bits=16
     ),
-    # RS03·RS04 는 **게인 범위까지 다름** -- Kp 가 10배, Kd 가 20배임.
-    # private 값을 MIT 프레임에 넣으면 게인이 1/10 로 들어가고, 반대면 10배로
-    # 들어감. 이 축을 없애면 그 실수가 남음.
     Model.RS03: EncodingRange(
         pmax_rad=12.57, vmax_rad_s=20.0, tmax_nm=60.0,
         kp_max=5000.0, kd_max=100.0, vel_bits=16, tau_bits=16,
@@ -201,11 +213,10 @@ FAULT_BITS: Dict[str, int] = {
 
 
 # ---------------------------------------------------------------------------
-# 파라미터 인덱스 (private type 17/18로 접근)
+# 파라미터 인덱스
 #
 # 본 프로젝트의 하드웨어 전제를 확인하는 데 쓰는 것만 둠. 나머지는 필요해질 때
 # 매뉴얼에서 추가할 것.
 # ---------------------------------------------------------------------------
-PARAM_PROTOCOL_FLAG = 0x201F   # 현재 통신 프로토콜. 전제 3 확인
-PARAM_ZERO_STA = 0x7029        # 0 = 위치 보고 [0,360), 1 = [-180,180). 전제 1 확인
-                               # 매뉴얼 p.27. Type 22로 저장해야 유지됨
+PARAM_PROTOCOL_FLAG = 0x201F   # 현재 통신 프로토콜
+PARAM_ZERO_STA = 0x7029        # 0 = 위치 보고 [0,360), 1 = [-180,180)

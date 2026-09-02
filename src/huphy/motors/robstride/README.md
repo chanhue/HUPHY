@@ -62,11 +62,11 @@ from huphy.motors.robstride import commissioning
 
 | 조합 | 위치 | 속도 | 토크 | 출처 |
 |---|---|---|---|---|
-| RS02 / **MIT** | ±12.57 rad | **±33 rad/s** | ±17 N·m | p.37~38 |
+| RS02 / **MIT** | ±12.57 rad | **±44 rad/s** | ±17 N·m | 6.5 |
 | RS02 / private | ±12.57 rad | **±44 rad/s** | ±17 N·m | p.20~21 |
-| RS00 / MIT | ±12.57 rad | ±33 rad/s | ±14 N·m | p.26 (미확인) |
+| RS00 / MIT | ±12.57 rad | ±33 rad/s | ±14 N·m | 6.5 |
 
-무부하 410rpm ≈ 43 rad/s이므로 private은 전 범위를, MIT은 12bit라 ±33으로 잘라
+`260713` 판본에서는 두 프로토콜의 범위가 같음. 예전 판본은 MIT 을 ±33으로 잘라
 쓰는 것으로 보임.
 
 **현재 MIT만 사용하지만 `PRIVATE_ENCODING`도 표에 남김.** 두 범위가 다르다는 사실
@@ -407,8 +407,8 @@ finally 토크 차단    중단해도 힘이 빠짐
 
 ### MIT 표준 프레임으로 되는 것만 있음
 
-파라미터 읽기·쓰기(`PARAM_PROTOCOL_FLAG`, `PARAM_ZERO_STA`)는 private type 17/18 로
-접근하므로 **29-bit 확장 프레임이 필요함.** 여기 없음.
+파라미터 읽기·쓰기(`PARAM_PROTOCOL_FLAG`, `PARAM_ZERO_STA`)를 다루는 명령은 여기
+없음. 인덱스만 `tables.py` 에 적어 둠.
 
 즉 하드웨어 전제를 코드로 확인할 수 없고, 지금은 외부 도구로 확인함 (이슈 #11).
 

@@ -222,17 +222,17 @@ uint = (값 + max) / (2*max) * (2**bits - 1)
 
 ```
 Byte0~1               목표각    16bit  <->  -12.57 ~ 12.57 rad
-Byte2 + Byte3[7:4]    목표속도  12bit  <->  -33 ~ 33 rad/s
-Byte3[3:0] + Byte4    Kp        12bit  <->  0 ~ 500
-Byte5 + Byte6[7:4]    Kd        12bit  <->  0 ~ 5
+Byte2 + Byte3[7:4]    목표속도  12bit  <->  모델마다 다름
+Byte3[3:0] + Byte4    Kp        12bit  <->  모델마다 다름
+Byte5 + Byte6[7:4]    Kd        12bit  <->  모델마다 다름
 Byte6[3:0] + Byte7    목표토크  12bit  <->  모델마다 다름
 ```
 
 범위표는 [tables.py](../src/huphy/motors/robstride/tables.py) 의 `MIT_ENCODING`.
 **모델마다 다름.**
 
-    RS00  토크 ±14 Nm      RS03  토크 ±60 Nm
-    RS02  토크 ±17 Nm      RS04  토크 ±120 Nm, 각도 ±15 rad
+    RS00  ±14 Nm   ±33 rad/s   Kp 0~500    RS03  ±60 Nm   ±20 rad/s  Kp 0~5000
+    RS02  ±17 Nm   ±44 rad/s   Kp 0~500    RS04  ±120 Nm  ±15 rad/s  Kp 0~5000
 
 한 다리 안에서도 갈림 — 0.5 는 발목만 RS00 이고, 1.0 은 hip_yaw 와 발목이 RS03 임. 표가 틀리면 그 비율만큼 토크가 어긋나는데,
 프레임에는 Nm 이 아니라 눈금만 실려 나가므로 실물에서 찾기 매우 어려움.

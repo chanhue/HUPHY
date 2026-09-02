@@ -18,24 +18,39 @@ NAN = float("nan")
 # tables — 사양
 # ===========================================================================
 class TestEncodingTables:
-    def test_protocol_axis_is_real(self):
-        """같은 RS02라도 프로토콜에 따라 속도 범위가 다름.
+    def test_ranges_match_across_protocols(self):
+        """260713 판본에서는 두 프로토콜의 범위가 같음.
 
-        이 축을 없애고 "모델별 사양" 하나로 뭉치면 private 값을 MIT에 가져다 쓰는
-        실수가 남. 두 값이 다르다는 사실 자체를 고정함.
+        예전 판본은 MIT 표에 다른 숫자를 적고 있었음(RS02 속도 33). 그 값을
+        그대로 두면 명령한 속도가 배율만큼 어긋남.
         """
-        mit_rs02 = T.encoding_for(T.Model.RS02, T.Protocol.MIT)
-        pri_rs02 = T.encoding_for(T.Model.RS02, T.Protocol.PRIVATE)
-        assert mit_rs02.vmax_rad_s == 33.0    # 매뉴얼 p.37~38
-        assert pri_rs02.vmax_rad_s == 44.0    # 매뉴얼 p.20~21
-        assert mit_rs02.vmax_rad_s != pri_rs02.vmax_rad_s
+        for model in T.Model:
+            mit = T.encoding_for(model, T.Protocol.MIT)
+            private = T.encoding_for(model, T.Protocol.PRIVATE)
+            assert mit.pmax_rad == private.pmax_rad
+            assert mit.vmax_rad_s == private.vmax_rad_s
+            assert mit.tmax_nm == private.tmax_nm
+            assert mit.kp_max == private.kp_max
+            assert mit.kd_max == private.kd_max
 
-    def test_position_and_torque_same_across_protocols(self):
-        """위치와 토크는 프로토콜과 무관함. 속도만 다름."""
+    def test_bit_widths_differ(self):
+        """범위는 같고 비트 폭만 다름. MIT 은 8바이트에 다섯 값을 넣어야 함."""
         m = T.encoding_for(T.Model.RS02, T.Protocol.MIT)
         p = T.encoding_for(T.Model.RS02, T.Protocol.PRIVATE)
-        assert m.pmax_rad == p.pmax_rad == 12.57
-        assert m.tmax_nm == p.tmax_nm == 17.0
+        assert (m.vel_bits, m.tau_bits) == (12, 12)
+        assert (p.vel_bits, p.tau_bits) == (16, 16)
+
+    def test_gain_range_differs_by_model(self):
+        """RS03·RS04 는 Kp 가 10배, Kd 가 20배임.
+
+        500 으로 두고 RS04 에 kp=20 을 보내면 모터가 199 로 받음.
+        """
+        for model in (T.Model.RS00, T.Model.RS02):
+            assert T.encoding_for(model).kp_max == 500.0
+            assert T.encoding_for(model).kd_max == 5.0
+        for model in (T.Model.RS03, T.Model.RS04):
+            assert T.encoding_for(model).kp_max == 5000.0
+            assert T.encoding_for(model).kd_max == 100.0
 
     def test_pmax_is_four_pi(self):
         """매뉴얼의 12.57은 4pi를 반올림한 값임 (= +-720도)."""
@@ -49,13 +64,14 @@ class TestEncodingTables:
     def test_missing_combination_raises(self):
         """조용히 기본값으로 때우지 않음 — 범위가 틀리면 실물에서 찾기 어려움."""
         with pytest.raises(KeyError, match="tables.py"):
-            T.encoding_for(T.Model.RS00, T.Protocol.PRIVATE)
+            T.encoding_for(T.Model.RS00, T.Protocol.CANOPEN)
 
-    def test_ankle_model_differs_in_torque(self):
-        """발목은 RS00. 위치·속도는 같고 토크만 다름."""
+    def test_ankle_model_differs_in_torque_and_speed(self):
+        """0.5 의 발목은 RS00. 각도만 RS02 와 같음."""
         rs00 = T.encoding_for(T.Model.RS00)
         assert rs00.tmax_nm == 14.0
-        assert rs00.vmax_rad_s == RS02.vmax_rad_s
+        assert rs00.vmax_rad_s == 33.0 != RS02.vmax_rad_s
+        assert rs00.pmax_rad == RS02.pmax_rad
 
 
 class TestCommandBytes:
