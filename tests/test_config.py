@@ -64,11 +64,16 @@ class TestRealFile:
         assert [right.motors[j].id for j in
                 ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_a", "ankle_b")] == [7, 8, 9, 10, 11, 12]
 
-    def test_ankle_uses_rs00(self):
-        """발목만 RS00 임. 토크 범위가 달라 같은 바이트가 다른 값을 뜻함."""
+    def test_models_differ_within_a_leg(self):
+        """큰 관절과 작은 관절이 다른 모델임. 인코딩 범위가 달라 같은 바이트가
+        다른 값을 뜻함 -- 섞이면 각도가 조용히 틀림.
+
+        1.0 은 무릎·고관절 pitch/roll 이 RS04, hip_yaw 와 발목이 RS03 임.
+        """
         right = load_robot(ROBOT_YAML).limb("right_leg")
-        assert right.motors["knee"].model == "RS02"
-        assert right.motors["ankle_a"].model == "RS00"
+        assert right.motors["knee"].model == "RS04"
+        assert right.motors["ankle_a"].model == "RS03"
+        assert right.motors["hip_yaw"].model == "RS03"
 
     def test_gains_are_set(self):
         """튜닝 시작값이 들어 있음. 0이면 토크가 아예 안 나가 재볼 수도 없음 (이슈 #9)."""
@@ -86,27 +91,32 @@ class TestRealFile:
         assert all(m.limits_deg is None for m in right.motors.values())
         assert right.is_configured is False
 
-    def test_left_leg_has_no_gains(self):
-        """한계를 모르는 관절에 게인만 넣으면 어디까지 가도 되는지 모르는 채로
-        토크가 나감."""
+    def test_both_legs_have_gains(self):
+        """양다리를 같이 돌리므로 둘 다 시작값이 있어야 함. 0이면 토크가 아예
+        안 나가 재볼 수도 없음 (이슈 #9).
+
+        한계는 아직 없지만 게인만으로는 토크가 안 나감 -- is_configured 가
+        거짓이라 제어 진입이 막힘.
+        """
         left = load_robot(ROBOT_YAML).limb("left_leg")
-        assert all(m.gains.kp == 0.0 for m in left.motors.values())
+        assert all(m.gains.kp > 0.0 for m in left.motors.values())
         assert left.is_configured is False
 
     def test_limits_live_in_the_calibration_file(self):
-        """오른다리는 재 놓았고 왼다리는 아직임. null 은 "제한 없음" 이 아니라
-        "안 잼" 이고, 그 상태에서는 제어 진입이 막힘."""
+        """한계는 yaml 이 아니라 캘리브레이션 파일에 있음 (이슈 #2).
+
+        **1.0 은 양쪽 다 아직 안 쟀음.** null 은 "제한 없음" 이 아니라 "안 잼"
+        이고, 그 상태에서는 제어 진입이 막힘. `commission sweep` 이 채움.
+
+        이 테스트가 깨지면 실측이 들어왔다는 뜻임 -- 그때 기대값을 뒤집을 것.
+        """
         import json
 
-        limbs = load_robot(ROBOT_YAML).limbs
-        right = json.loads(
-            limbs["right_leg"].calibration_path.read_text(encoding="utf-8")
-        )
-        left = json.loads(
-            limbs["left_leg"].calibration_path.read_text(encoding="utf-8")
-        )
-        assert all(e["limits_deg"] is not None for e in right["motors"].values())
-        assert all(e["limits_deg"] is None for e in left["motors"].values())
+        for name in ("right_leg", "left_leg"):
+            limb = load_robot(ROBOT_YAML).limb(name)
+            data = json.loads(limb.calibration_path.read_text(encoding="utf-8"))
+            assert "limits_deg" in next(iter(data["motors"].values()))
+            assert all(e["limits_deg"] is None for e in data["motors"].values())
 
     def test_calibration_path_is_absolute(self):
         """실행 위치가 달라져도 같은 파일을 가리켜야 함."""
