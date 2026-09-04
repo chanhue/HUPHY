@@ -13,6 +13,7 @@ from .guards import (
     is_finite,
 )
 from .limits import Limits, clamp, closest_to_limit, margin_to_limit, safe_window
+from .link import DEFAULT_MAX_MISS_CYCLES, LinkLoss, LinkWatch
 
 __all__ = [
     # limits — 한계와의 관계 계산
@@ -28,5 +29,9 @@ __all__ = [
     "GuardResult",
     "GuardCounters",
     "ClipReason",
+    # link — 응답이 오고 있나
+    "LinkWatch",
+    "LinkLoss",
+    "DEFAULT_MAX_MISS_CYCLES",
     "RejectReason",
 ]

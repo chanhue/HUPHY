@@ -10,6 +10,7 @@ import pytest
 
 import time
 
+from huphy.config.schema import SafetyConfig
 from huphy.control import ControlLoop, LoopStats, Mode, motions
 from huphy.control.loop import precise_sleep
 
@@ -439,3 +440,88 @@ class TestStep:
     def test_step_returns_the_observation(self, robot):
         loop = ControlLoop(robot, hz=100.0, mode=Mode.OBSERVE)
         assert "knee.pos" in loop.step(None, t=0.0)
+
+
+# ===========================================================================
+# 통신 두절 시 정지
+# ===========================================================================
+class SilentRobot(FakeRobot):
+    """응답이 없는 로봇. `miss` 가 주기마다 늘어감."""
+
+    def __init__(self, *args, silent_from=0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.silent_from = silent_from
+        self.cycle = 0
+        self.safety = SafetyConfig(link_loss_cycles=3)
+
+    def collect(self):
+        self.cycle += 1
+        return super().collect()
+
+    def link_status(self, now=None):
+        miss = max(0, self.cycle - self.silent_from)
+        return {"knee": {"age": -1.0, "ack": 0.0, "miss": float(miss)}}
+
+
+class TestLinkLoss:
+    def test_it_stops_the_loop(self):
+        """이어지는 무응답은 그 모터가 마지막 명령을 유지하고 있다는 뜻임."""
+        robot = SilentRobot()
+        loop = ControlLoop(robot, hz=1000.0, mode=Mode.CONTROL)
+
+        stats = loop.run(motions.hold({"knee": 0.0}), max_cycles=50)
+        assert stats.link_loss is not None
+        assert stats.cycles < 50
+
+    def test_it_names_what_died(self):
+        stats = ControlLoop(SilentRobot(), hz=1000.0, mode=Mode.CONTROL).run(
+            motions.hold({"knee": 0.0}), max_cycles=50
+        )
+        assert stats.link_loss.motors == ("knee",)
+
+    def test_it_settles_before_cutting_torque(self):
+        """바로 끊으면 서 있는 다리가 주저앉음."""
+        robot = SilentRobot()
+        ControlLoop(robot, hz=1000.0, mode=Mode.CONTROL).run(
+            motions.hold({"knee": 0.0}), max_cycles=50
+        )
+        assert "hold" in robot.log
+        assert robot.log.index("hold") < robot.log.index("disable")
+
+    def test_a_healthy_robot_runs_to_the_end(self):
+        robot = SilentRobot(silent_from=10_000)
+        stats = ControlLoop(robot, hz=1000.0, mode=Mode.CONTROL).run(
+            motions.hold({"knee": 0.0}), max_cycles=20
+        )
+        assert stats.link_loss is None
+        assert stats.cycles == 20
+
+    def test_observe_mode_does_not_stop(self):
+        """토크가 없어서 세울 것이 없음. 커미셔닝에서 진행이 끊기면 곤란함."""
+        robot = SilentRobot()
+        stats = ControlLoop(robot, hz=1000.0, mode=Mode.OBSERVE).run(max_cycles=20)
+        assert stats.link_loss is None
+        assert stats.cycles == 20
+
+    def test_config_can_turn_it_off(self):
+        robot = SilentRobot()
+        robot.safety = SafetyConfig(link_loss_cycles=0)
+        stats = ControlLoop(robot, hz=1000.0, mode=Mode.CONTROL).run(
+            motions.hold({"knee": 0.0}), max_cycles=20
+        )
+        assert stats.link_loss is None
+        assert stats.cycles == 20
+
+    def test_a_robot_without_link_status_is_left_alone(self, robot):
+        """응답 개념이 없는 로봇도 있음."""
+        stats = ControlLoop(robot, hz=1000.0, mode=Mode.CONTROL).run(
+            motions.hold({"knee": 0.0}), max_cycles=20
+        )
+        assert stats.link_loss is None
+
+    def test_the_summary_says_why_it_stopped(self):
+        """정상 종료와 구분되어야 함. 둘 다 조용히 끝남."""
+        stats = ControlLoop(SilentRobot(), hz=1000.0, mode=Mode.CONTROL).run(
+            motions.hold({"knee": 0.0}), max_cycles=50
+        )
+        assert "통신 두절" in stats.summary()

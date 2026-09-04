@@ -58,6 +58,18 @@ CPU 를 태우는 구간이라 짧게 둠. 100Hz 에서 마지막 1~2ms 정도�
 `hold` 를 몇 주기 보내 자세를 붙잡은 뒤 끊음.
 
 예외로 빠져나가도 이 순서를 탐.
+
+
+## 통신이 끊기면 스스로 멈춤
+
+연속 무응답이 이어지면 그 모터는 **현재 위치를 모른 채 마지막 명령을 유지하고
+있음.** 다리 하나면 그 관절만 굳지만, 양다리면 한쪽만 움직여 로봇이 넘어짐.
+
+판정은 `safety/link.py` 가 하고, 여기는 그 결과로 위의 정지 절차를 탐. 몇 주기를
+기다릴지는 `SafetyConfig.link_loss_cycles` 임.
+
+**제어 모드에서만 봄.** 관찰 모드는 토크가 없어서 세울 것이 없고, 커미셔닝처럼
+응답이 원래 드문 상황에서 멀쩡한 진행이 끊김.
 """
 
 from __future__ import annotations
@@ -69,6 +81,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, Optional
 
 from ..robots.base import Action, Robot
+from ..safety.link import LinkLoss, LinkWatch
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +177,13 @@ class LoopStats:
     target_hz: float = 0.0
     """목표 주기. 실제와 대조하는 데 씀."""
 
+    link_loss: Optional["LinkLoss"] = None
+    """통신 두절로 멈췄으면 무엇이 끊겼는지. 정상 종료면 `None`.
+
+    **정상 종료와 구분되어야 함.** 둘 다 루프가 조용히 끝나므로, 이 값이 없으면
+    사람이 "시간이 다 됐나" 와 "다리가 죽었나" 를 구분할 수 없음.
+    """
+
     @property
     def mean_hz(self) -> float:
         return self.cycles / self.total_s if self.total_s > 0 else 0.0
@@ -180,6 +200,8 @@ class LoopStats:
     def summary(self) -> str:
         target = f" / 목표 {self.target_hz:.0f}Hz" if self.target_hz else ""
         warn = "" if self.kept_up else "  ** 주기를 못 지킴 **"
+        if self.link_loss is not None:
+            warn += f"  ** 통신 두절로 멈춤: {self.link_loss} **"
         return (
             f"{self.cycles}주기 {self.total_s:.1f}초 "
             f"(평균 {self.mean_hz:.1f}Hz{target}), "
@@ -202,6 +224,7 @@ class ControlLoop:
         telemetry: Any = None,
         mode: Mode = Mode.OBSERVE,
         precise: bool = True,
+        link_watch: Optional[LinkWatch] = None,
     ) -> None:
         if hz <= 0:
             raise ValueError(f"hz 는 0보다 커야 함 (받은 값 {hz})")
@@ -212,6 +235,14 @@ class ControlLoop:
         self.mode = mode
         self.precise = precise
         """마감 직전을 돌면서 기다릴지. 끄면 `time.sleep` 만 씀."""
+        self.link_watch = (
+            link_watch if link_watch is not None else _watch_from(robot)
+        )
+        """통신 두절 판정. 로봇의 안전 설정에서 만들어짐.
+
+        직접 넘기면 그것을 씀 -- 커미셔닝처럼 응답이 원래 드문 상황에서 끔.
+        """
+
         self.stats = LoopStats(target_hz=self.hz)
         self._stop = False
 
@@ -240,10 +271,37 @@ class ControlLoop:
             if action:
                 self.robot.send(self.robot.build_commands(action))
             missing = self.robot.collect()
+            self._check_link()
 
         if missing:
             self.stats.missing_cycles += 1
         return observation
+
+    def _check_link(self) -> None:
+        """통신이 끊겼으면 루프를 세움. **제어 모드에서만 부름.**
+
+        여기서 토크를 끊지 않음 -- 정지 절차(`_exit`)가 자세를 붙잡은 뒤 끊는
+        순서를 가지고 있음. 바로 끊으면 서 있는 다리가 주저앉음.
+
+        **이미 판정된 뒤에는 다시 보지 않음.** 멈추는 중에도 응답이 계속 없을
+        것이므로, 다시 보면 같은 경고가 매 주기 쌓임.
+        """
+        if not self.link_watch.enabled or self.stats.link_loss is not None:
+            return
+        status = getattr(self.robot, "link_status", None)
+        if not callable(status):
+            return
+
+        loss = self.link_watch.check(status())
+        if loss is None:
+            return
+
+        self.stats.link_loss = loss
+        logger.error(
+            "%s 통신 두절로 멈춤: %s. 자세를 붙잡고 토크를 끊음",
+            self.robot.id, loss,
+        )
+        self.stop()
 
     # ---- 계속 돌림 ---------------------------------------------------------
     def run(
@@ -385,3 +443,14 @@ class ControlLoop:
         except Exception as e:
             # 관측이 제어를 멈추면 관측할 대상이 없어짐.
             logger.warning("%s 텔레메트리 기록 실패: %s", self.robot.id, e)
+
+
+def _watch_from(robot: Any) -> LinkWatch:
+    """로봇의 안전 설정으로 통신 두절 판정을 만듦.
+
+    설정이 없는 로봇(테스트의 가짜 로봇 등)은 기본값으로 감 — 판정을 켜는 것이
+    안전한 쪽임.
+    """
+    safety = getattr(robot, "safety", None)
+    cycles = getattr(safety, "link_loss_cycles", None)
+    return LinkWatch() if cycles is None else LinkWatch(cycles)

@@ -11,6 +11,7 @@ import math
 import pytest
 
 from huphy.safety import guards, limits
+from huphy.safety import LinkWatch
 
 # 실제 무릎(m10) 한계. 비대칭이라 좌우 구분이 필요한 검사에 적합함.
 KNEE = (-20.65, 74.79)
@@ -292,3 +293,52 @@ class TestGuardCounters:
         c.reset()
         assert c.total_clips == 0
         assert c.total_rejects == 0
+
+
+# ===========================================================================
+# 통신 두절 판정
+# ===========================================================================
+def status(**miss):
+    """`link_status` 모양의 사전. 값은 연속 무응답 주기 수."""
+    return {name: {"age": 1.0, "ack": 0.0, "miss": float(n)} for name, n in miss.items()}
+
+
+class TestLinkWatch:
+    def test_quiet_link_is_fine(self):
+        assert LinkWatch(5).check(status(knee=0)) is None
+
+    def test_one_dropped_cycle_is_normal(self):
+        """한 주기 빠지는 것은 흔함. 다음 주기에 옴."""
+        assert LinkWatch(5).check(status(knee=1)) is None
+
+    def test_sustained_silence_trips(self):
+        loss = LinkWatch(5).check(status(knee=5))
+        assert loss is not None
+        assert loss.motors == ("knee",)
+
+    def test_one_motor_is_enough(self):
+        """무릎 하나가 굳어도 그 다리는 의도한 자세를 못 만듦."""
+        loss = LinkWatch(3).check(status(hip_pitch=0, knee=3))
+        assert loss.motors == ("knee",)
+
+    def test_it_reports_the_worst(self):
+        loss = LinkWatch(3).check(status(knee=4, hip_roll=9))
+        assert loss.cycles == 9
+        assert loss.motors == ("hip_roll", "knee")
+
+    def test_zero_turns_it_off(self):
+        """커미셔닝처럼 응답이 원래 드문 상황용."""
+        assert not LinkWatch(0).enabled
+        assert LinkWatch(0).check(status(knee=100)) is None
+
+    def test_composite_names_carry_the_limb(self):
+        """어느 다리가 죽었는지 알아야 사람이 손을 씀."""
+        loss = LinkWatch(3).check(status(**{"left_leg/knee": 5}))
+        assert loss.motors == ("left_leg/knee",)
+
+    def test_missing_field_counts_as_answering(self):
+        """`miss` 를 안 내는 로봇을 끊긴 것으로 보지 않음."""
+        assert LinkWatch(1).check({"knee": {"age": 1.0}}) is None
+
+    def test_message_says_what_and_how_long(self):
+        assert "3주기째" in str(LinkWatch(3).check(status(knee=3)))

@@ -65,11 +65,28 @@ class SafetyConfig:
     켜 둘 것.
     """
 
+    link_loss_cycles: int = 5
+    """이 주기 수만큼 연속으로 응답이 없으면 **로봇을 세움.** 100Hz 에서 50ms.
+
+    한 주기 빠지는 것은 흔함 — 다음 주기에 옴. 이어지면 그 모터는 현재 위치를
+    모른 채 마지막 명령을 유지하고 있음. 양다리에서는 한쪽만 움직이게 되어
+    로봇이 넘어짐.
+
+    `0` 이면 판정하지 않음. 커미셔닝처럼 응답이 원래 드문 상황용임.
+
+    제어 모드에서만 봄 — 관찰 모드는 토크가 없어서 세울 것이 없음.
+    """
+
     def __post_init__(self) -> None:
         if self.command_margin_deg < 0:
             raise ValueError(f"command_margin_deg 는 0 이상이어야 함 (받은 값 {self.command_margin_deg})")
         if self.max_delta_deg <= 0:
             raise ValueError(f"max_delta_deg 는 0보다 커야 함 (받은 값 {self.max_delta_deg})")
+        if self.link_loss_cycles < 0:
+            raise ValueError(
+                f"link_loss_cycles 는 0 이상이어야 함 (받은 값 {self.link_loss_cycles}). "
+                f"0 은 판정하지 않는다는 뜻임"
+            )
 
 
 @dataclass(frozen=True)
