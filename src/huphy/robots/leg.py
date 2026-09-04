@@ -71,6 +71,7 @@ from ..kinematics.ankle import AnkleKinematics, AnkleUnreachableError
 from ..motors.base import MotorCalibration
 from ..motors.robstride.bus import MitCommand, RobStrideBus
 from ..safety import guards
+from ..sensors.group import ImuGroup
 from .base import Action, Observation, Robot
 
 logger = logging.getLogger(__name__)
@@ -154,11 +155,14 @@ class Leg(Robot):
         값임 -- 이쪽은 **관절 각도**에 거는 것이고, 로드 지렛대 비는 야코비안이 봄.
         """
 
-        self.imus: Tuple[Any, ...] = tuple(imus or ())
+        self.imus = ImuGroup(imus or (), owner=config.name)
         """이 다리에 붙은 IMU 들. **없어도 다리는 그대로 돎.**
 
         어느 다리에 붙었는지는 설정(`ImuConfig.mount`)이 정하고, 조립하는 쪽이
         골라서 넣어 줌. 다리는 어느 회사 센서인지 모름 -- `sensors.base.Imu` 만 봄.
+
+        **다리에 붙은 센서만 여기 옴.** 몸통 IMU 는 로봇 전체의 것이라
+        `Biped` 가 들고 있음 (`sensors/group.py`).
         """
 
         missing = [m for m in REQUIRED_MOTORS if m not in config.motors]
@@ -278,11 +282,7 @@ class Leg(Robot):
         self._connect_imus()
 
     def disconnect(self) -> None:
-        for imu in self.imus:
-            try:
-                imu.disconnect()
-            except Exception as e:
-                logger.warning("%s IMU 종료 실패: %s", self.id, e)
+        self.imus.disconnect()
         self.bus.disconnect()
 
     def _connect_imus(self) -> None:
@@ -291,20 +291,14 @@ class Leg(Robot):
         IMU 는 관측이지 제어가 아님. 센서가 안 붙어 있다고 다리를 못 움직이면,
         고장 났을 때 로봇을 안전한 자세로 되돌리는 것조차 못 하게 됨.
         """
-        for imu in self.imus:
-            try:
-                imu.connect()
-            except Exception as e:
-                logger.warning(
-                    "%s IMU %s 를 열지 못함 (다리는 계속 씀): %s", self.id, imu.name, e
-                )
+        self.imus.connect()
 
     def imu_states(self) -> Dict[str, Any]:
         """붙은 IMU 들의 최신 값. 개체 이름 -> `ImuState`.
 
         **새로 통신하지 않음.** 벤더 구현이 백그라운드로 받아 둔 것을 꺼내기만 함.
         """
-        return {imu.name: imu.read() for imu in self.imus}
+        return self.imus.states()
 
     def enable(self) -> None:
         """토크를 넣음. **캘리브레이션과 설정이 채워져 있어야 함.**

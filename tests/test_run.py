@@ -145,7 +145,7 @@ def fake_can(monkeypatch):
     mod.Message = FakeMessage
     mod.interface = types.SimpleNamespace(Bus=FakeBus)
     monkeypatch.setitem(sys.modules, "can", mod)
-    monkeypatch.setattr("huphy.scripts.bringup.make_imu", lambda cfg: FakeImu(cfg.name))
+    monkeypatch.setattr("huphy.sensors.registry.make_imu", lambda cfg: FakeImu(cfg.name))
     return mod
 
 

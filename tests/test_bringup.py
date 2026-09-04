@@ -20,6 +20,7 @@ from huphy.control import ControlLoop, Mode
 from huphy.motors.robstride import tables as T
 from huphy.motors.robstride.codec import mit
 from huphy.scripts import bringup
+from huphy.sensors import registry
 
 MODELS = {7: T.Model.RS02, 8: T.Model.RS02, 9: T.Model.RS02,
           10: T.Model.RS02, 11: T.Model.RS00, 12: T.Model.RS00}
@@ -495,7 +496,7 @@ def imu_menu(fake_can, imu_cfg, monkeypatch, capsys):
         made.append(imu)
         return imu
 
-    monkeypatch.setattr(bringup, "make_imu", fake_make)
+    monkeypatch.setattr(registry, "make_imu", fake_make)
 
     def _run(inputs, *argv):
         it = iter(inputs)
@@ -522,7 +523,7 @@ class TestImuOnTheLeg:
 
     def test_a_silent_sensor_says_so(self, imu_menu, monkeypatch):
         """자세는 멈춰도 그럴듯한 숫자로 남음. 살아 있는지는 따로 말해야 함."""
-        monkeypatch.setattr(bringup, "make_imu", lambda c: FakeImu(c.name, valid=False))
+        monkeypatch.setattr(registry, "make_imu", lambda c: FakeImu(c.name, valid=False))
         _, out, _ = imu_menu(["1", "q"])
         assert "응답 없음" in out
 
@@ -536,7 +537,7 @@ class TestImuOnTheLeg:
         def boom(config):
             raise RuntimeError("포트가 없음")
 
-        monkeypatch.setattr(bringup, "make_imu", boom)
+        monkeypatch.setattr(registry, "make_imu", boom)
         it = iter(["1", "q"])
         monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
         code = bringup.main(["--config", str(imu_cfg), "--limb", "right_leg"])

@@ -53,7 +53,7 @@ from ..motors.base import Gains
 from ..motors.canbus import CanBus
 from ..motors.robstride.bus import RobStrideBus
 from ..robots.leg import ANKLE_JOINTS, SINGLE_JOINTS, Leg
-from ..sensors import make_imu
+from ..sensors import make_imus
 from . import table
 from .commission import CONFIG_NAME, _find_config, _pick_limb
 
@@ -138,16 +138,10 @@ def _imus_on(robot: RobotConfig, limb: LimbConfig) -> List[object]:
     어디에 붙었는지는 설정의 `mount` 가 정함. 몸통으로 옮기면 여기서 안 걸리고,
     다리 코드는 손댈 일이 없음.
 
-    **만들지 못해도 다리는 만듦.** 모르는 model 이나 빠진 의존성 때문에 다리를 못
-    쓰게 되면, 센서가 고장 났을 때 로봇을 안전한 자세로 되돌릴 수도 없음.
+    **다리 하나만 돌릴 때 쓰는 길임.** 로봇 전체를 조립할 때는 센서가 다리가 아니라
+    로봇에 달림 (`sensors/group.py` 의 `ImuGroup`).
     """
-    out: List[object] = []
-    for config in robot.imus_on(limb.name).values():
-        try:
-            out.append(make_imu(config))
-        except Exception as e:
-            logger.warning("IMU %s 를 만들지 못함 (없이 진행함): %s", config.name, e)
-    return out
+    return list(make_imus(robot.imus_on(limb.name).values()))
 
 
 # ===========================================================================

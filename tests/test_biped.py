@@ -335,3 +335,88 @@ class TestDiagnostics:
 
     def test_safety_defaults(self, log):
         assert Biped([FakePart("a", log)]).safety == SafetyConfig()
+
+
+# ===========================================================================
+# IMU 는 팔다리와 나란히 있음
+# ===========================================================================
+class FakeImu:
+    """열고 닫는 것만 기록하는 가짜 센서."""
+
+    extra_fields = ()
+
+    def __init__(self, name, *, fail=()):
+        self.name = name
+        self.fail = set(fail)
+        self.opened = False
+
+    def connect(self):
+        if "connect" in self.fail:
+            raise RuntimeError(f"{self.name} 포트가 없음")
+        self.opened = True
+
+    def disconnect(self):
+        if "disconnect" in self.fail:
+            raise RuntimeError(f"{self.name} 종료 실패")
+        self.opened = False
+
+    def read(self):
+        return f"{self.name} state"
+
+
+class TestImus:
+    def test_robot_owns_them(self, log):
+        """몸통 센서는 어느 다리의 것도 아님."""
+        biped = Biped([FakePart("right_leg", log)], imus=[FakeImu("torso")])
+        assert biped.imus.names == ("torso",)
+
+    def test_none_by_default(self, biped):
+        assert len(biped.imus) == 0
+
+    def test_opened_with_the_robot(self, log):
+        imu = FakeImu("torso")
+        Biped([FakePart("a", log)], imus=[imu]).connect()
+        assert imu.opened
+
+    def test_a_broken_sensor_does_not_stop_the_robot(self, log):
+        """IMU 는 관측이지 제어가 아님. 못 열어도 로봇은 써야 함."""
+        biped = Biped([FakePart("a", log)], imus=[FakeImu("torso", fail={"connect"})])
+
+        biped.connect()
+        assert biped.is_connected
+
+    def test_a_missing_sensor_is_still_connected(self, log):
+        """연결 판정은 팔다리만 봄."""
+        biped = Biped([FakePart("a", log)], imus=[FakeImu("torso", fail={"connect"})])
+        biped.connect()
+        assert biped.is_connected
+
+    def test_closed_with_the_robot(self, log):
+        imu = FakeImu("torso")
+        biped = Biped([FakePart("a", log)], imus=[imu])
+        biped.connect()
+        biped.disconnect()
+        assert not imu.opened
+
+    def test_a_broken_close_does_not_leave_torque_on(self, log):
+        """센서 종료가 실패해도 팔다리는 닫아야 함 -- 안 닫으면 토크가 남음."""
+        biped = Biped(
+            [FakePart("a", log)], imus=[FakeImu("torso", fail={"disconnect"})]
+        )
+        biped.disconnect()
+        assert ("a", "disconnect") in log
+
+    def test_states_merge_leg_sensors(self, log):
+        """다리에 달린 센서도 같이 냄. 찾는 쪽은 개체 이름만 앎."""
+        part = FakePart("right_leg", log)
+        part.imu_states = lambda: {"shin": "shin state"}
+        biped = Biped([part], imus=[FakeImu("torso")])
+
+        assert biped.imu_states() == {"torso": "torso state", "shin": "shin state"}
+
+    def test_all_imus_covers_both_places(self, log):
+        part = FakePart("right_leg", log)
+        part.imus = (FakeImu("shin"),)
+        biped = Biped([part], imus=[FakeImu("torso")])
+
+        assert {i.name for i in biped.all_imus} == {"torso", "shin"}

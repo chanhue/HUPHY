@@ -38,6 +38,20 @@
 그래서 `send_action()` 을 쓰지 않고 계산·전송·수거를 직접 엮음.
 
 
+## IMU 는 팔다리와 나란히 있음
+
+    Biped
+     ├ Leg("right_leg")
+     ├ Leg("left_leg")
+     └ ImuGroup
+
+몸통에 붙은 센서는 어느 다리의 것도 아님. 다리가 들고 있으면 센서를 몸통으로
+옮길 때 소유자가 바뀌어야 하는데, `mount` 한 줄만 고쳐도 되게 하려는 것이
+설정을 그렇게 나눈 이유였음 (`config/schema.py` 의 `ImuConfig`).
+
+다리에 붙은 센서는 여전히 그 다리가 들고 있어도 됨 — 조립하는 쪽이 정함.
+
+
 ## 명령 꾸러미가 팔다리별로 나뉨
 
     {"right_leg": {10: MitCommand(...)}, "left_leg": {4: MitCommand(...)}}
@@ -52,6 +66,7 @@ import logging
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
 from ..config.schema import SafetyConfig
+from ..sensors.group import ImuGroup
 from .base import Action, Commands, Observation, Robot
 
 logger = logging.getLogger(__name__)
@@ -85,6 +100,7 @@ class Biped(Robot):
         *,
         id: str = "biped",
         safety: Optional[SafetyConfig] = None,
+        imus: Iterable[Any] = (),
     ) -> None:
         if not parts:
             raise ValueError("팔다리가 하나도 없음")
@@ -110,6 +126,14 @@ class Biped(Robot):
 
         여기 두는 이유는 값의 출처를 한 곳으로 두려는 것임 — 팔다리마다 다른 여유를
         주면 어느 쪽이 먼저 걸리는지 로그만 보고 알 수 없음.
+        """
+
+        self.imus = ImuGroup(imus, owner=id)
+        """로봇 전체에 붙은 IMU. **팔다리와 나란히 있음.**
+
+        몸통 센서는 어느 다리의 것도 아니고, 다리 센서를 몸통으로 옮길 때 소유자가
+        바뀌지 않아야 함. 다리가 자기 센서를 따로 들고 있어도 됨 -- 조립하는 쪽이
+        어디에 넣을지 정함.
         """
 
     def __repr__(self) -> str:
@@ -163,10 +187,12 @@ class Biped(Robot):
     # ---- 수명 -------------------------------------------------------------
     @property
     def is_connected(self) -> bool:
-        """**전부** 붙어 있어야 참임.
+        """**팔다리가 전부** 붙어 있어야 참임.
 
         하나라도 빠지면 그 다리는 명령을 못 받는데, 나머지만 움직이면 로봇이
         넘어짐. 부분 연결을 정상으로 보지 않음.
+
+        **IMU 는 안 봄.** 관측이라 없어도 로봇은 돎.
         """
         return all(p.is_connected for p in self.parts)
 
@@ -189,11 +215,17 @@ class Biped(Robot):
                     logger.warning("%s 정리 실패: %s", part.id, e)
             raise
 
+        # 팔다리가 다 붙은 뒤에 엶. **실패해도 올리지 않음** -- IMU 는 관측이지
+        # 제어가 아니라, 센서 때문에 로봇을 못 움직이면 안전한 자세로 되돌리는
+        # 것조차 막힘. 값이 필요한 쪽이 시작 전에 확인함.
+        self.imus.connect()
+
     def disconnect(self) -> None:
         """전부 닫음. **하나가 실패해도 나머지를 닫음.**
 
         여기서 멈추면 다른 다리에 토크가 남음.
         """
+        self.imus.disconnect()
         for part in self.parts:
             try:
                 part.disconnect()
@@ -246,6 +278,26 @@ class Biped(Robot):
             for name, value in part.get_observation().items():
                 out[join_name(part.id, name)] = value
         return out
+
+    def imu_states(self) -> Dict[str, Any]:
+        """붙은 IMU 들의 최신 값. 개체 이름 -> `ImuState`.
+
+        **팔다리에 달린 것도 같이 냄.** 텔레메트리와 정책은 센서가 어디 달렸는지가
+        아니라 개체 이름으로 값을 찾음 — 다리에서 몸통으로 옮겨도 이름이 그대로임.
+        """
+        out = dict(self.imus.states())
+        for part in self.parts:
+            states = getattr(part, "imu_states", None)
+            if callable(states):
+                out.update(states())
+        return out
+
+    @property
+    def all_imus(self) -> Tuple[Any, ...]:
+        """로봇에 달린 것과 팔다리에 달린 것을 합친 목록."""
+        return tuple(self.imus) + tuple(
+            imu for part in self.parts for imu in getattr(part, "imus", ())
+        )
 
     def link_status(self, now: Optional[float] = None) -> Dict[str, Dict[str, float]]:
         """모터별 링크 상태. `팔다리/모터` -> `{age, ack, miss}`.

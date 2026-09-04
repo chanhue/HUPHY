@@ -10,7 +10,7 @@ import types
 
 import pytest
 
-from huphy.sensors import make_imu
+from huphy.sensors import ImuGroup, make_imu, make_imus
 from huphy.sensors.base import (
     Imu,
     ImuState,
@@ -293,3 +293,79 @@ def test_every_registered_model_is_reachable():
     """표에 적힌 것은 전부 만들어져야 함."""
     for model in MODELS:
         assert make_imu(FakeConfig(model=model)) is not None
+
+
+# ===========================================================================
+# 묶음
+# ===========================================================================
+class GroupImu:
+    """열고 닫는 것만 기록하는 가짜 센서."""
+
+    def __init__(self, name, *, fail=()):
+        self.name = name
+        self.fail = set(fail)
+        self.opened = False
+
+    def connect(self):
+        if "connect" in self.fail:
+            raise RuntimeError("포트가 없음")
+        self.opened = True
+
+    def disconnect(self):
+        if "disconnect" in self.fail:
+            raise RuntimeError("종료 실패")
+        self.opened = False
+
+    def read(self):
+        return f"{self.name} state"
+
+
+class TestImuGroup:
+    def test_opens_all(self):
+        imus = [GroupImu("a"), GroupImu("b")]
+        ImuGroup(imus).connect()
+        assert all(i.opened for i in imus)
+
+    def test_one_failure_does_not_stop_the_rest(self):
+        """센서 하나 때문에 로봇을 못 쓰게 되면 안전한 자세로 되돌릴 수도 없음."""
+        imus = [GroupImu("a", fail={"connect"}), GroupImu("b")]
+        ImuGroup(imus).connect()
+        assert imus[1].opened
+
+    def test_closes_all_even_after_failure(self):
+        imus = [GroupImu("a", fail={"disconnect"}), GroupImu("b")]
+        group = ImuGroup(imus)
+        group.connect()
+        group.disconnect()
+        assert not imus[1].opened
+
+    def test_states_are_keyed_by_name(self):
+        assert ImuGroup([GroupImu("main")]).states() == {"main": "main state"}
+
+    def test_reads_nothing_new(self):
+        """제어 주기 안에서 시리얼을 기다리면 주기가 센서에 끌려감."""
+        group = ImuGroup([GroupImu("main")])
+        assert group.states() == group.states()
+
+    def test_behaves_like_a_list(self):
+        """텔레메트리가 붙은 센서를 훑어 열을 만듦."""
+        group = ImuGroup([GroupImu("a"), GroupImu("b")])
+        assert len(group) == 2
+        assert group[0].name == "a"
+        assert [i.name for i in group] == ["a", "b"]
+
+    def test_empty_is_falsy(self):
+        assert not ImuGroup()
+
+    def test_names(self):
+        assert ImuGroup([GroupImu("a")]).names == ("a",)
+
+
+class TestMakeImus:
+    def test_builds_each(self):
+        assert len(make_imus([FakeConfig(name="a"), FakeConfig(name="b")])) == 2
+
+    def test_a_broken_one_is_dropped(self):
+        """모르는 model 하나가 로봇 전체를 막지 않음."""
+        made = make_imus([FakeConfig(name="a"), FakeConfig(name="b", model="없는것")])
+        assert [i.name for i in made] == ["a"]

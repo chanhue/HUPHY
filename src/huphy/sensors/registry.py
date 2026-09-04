@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Iterable, List
+
+import logging
 
 from .base import Imu
 
@@ -46,6 +48,8 @@ def _ebimu(config: Any) -> Imu:
     )
 
 
+logger = logging.getLogger(__name__)
+
 MODELS: Dict[str, Callable[[Any], Imu]] = {
     "xsens_mti": _xsens,
     "ebimu": _ebimu,
@@ -65,3 +69,20 @@ def make_imu(config: Any) -> Imu:
             f"(가용: {sorted(MODELS)})"
         )
     return factory(config)
+
+
+def make_imus(configs: Iterable[Any]) -> List[Imu]:
+    """여러 IMU 를 만듦. **만들지 못한 것은 빼고 진행함.**
+
+    모르는 `model` 이나 빠진 의존성 때문에 로봇 전체를 못 쓰게 되면, 센서가 고장
+    났을 때 안전한 자세로 되돌리는 것조차 막힘. 빠진 것은 경고로 남김.
+
+    아직 열지 않음 — 여는 것은 `ImuGroup.connect()` 가 함.
+    """
+    out: List[Imu] = []
+    for config in configs:
+        try:
+            out.append(make_imu(config))
+        except Exception as e:  # noqa: BLE001 - 센서 하나로 로봇을 막지 않음
+            logger.warning("IMU %s 를 만들지 못함 (없이 진행함): %s", config.name, e)
+    return out
