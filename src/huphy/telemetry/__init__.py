@@ -40,7 +40,9 @@ from .snapshot import (
     fast_field_names,
     field_names,
     imu_field_names,
+    imus_of,
     merge,
+    parts,
 )
 from .udp import UdpSink
 
@@ -60,6 +62,8 @@ __all__ = [
     "diag_field_names",
     "imu_field_names",
     "merge",
+    "parts",
+    "imus_of",
 ]
 
 DEFAULT_DIAG_EVERY = 10
@@ -87,8 +91,15 @@ class Telemetry:
         diag_every: int = DEFAULT_DIAG_EVERY,
     ) -> None:
         self.robot = robot
+        self.parts = parts(robot)
+        """기록 단위. 합성 로봇이면 팔다리들, 아니면 로봇 자신 하나.
+
+        **팔다리마다 따로 찍어 따로 보냄.** 한 패킷에 합치면 MTU 를 넘어 조각나고,
+        조각 하나만 잃어도 패킷 전체가 버려짐 (`snapshot.merge` 참조).
+        """
+
         self.fields = field_names(robot)
-        self.has_imu = bool(getattr(robot, "imus", ()))
+        self.has_imu = bool(imus_of(robot))
         """IMU 가 붙었는지. 없으면 그 패킷은 아예 안 보냄 -- `t` 만 든 패킷을
         100Hz 로 보내는 것은 낭비임. CSV 열도 `t` 하나뿐이라 늘지 않음.
         """
@@ -148,26 +159,35 @@ class Telemetry:
 
         진단 값은 **매번 계산함** — 사전 만드는 비용은 무시할 만하고, CSV 는 매 줄에
         다 있어야 나중에 대조하기 쉬움. 나누는 것은 보내는 쪽뿐임.
+
+        **팔다리가 여럿이면 UDP 패킷도 그만큼 나감.** CSV 는 한 줄로 합침 -- 같은
+        시각의 두 다리를 나란히 봐야 하기 때문임. UDP 를 합치지 않는 이유는 MTU 임.
         """
         now = time.monotonic()
         if self._t0 is None:
             self._t0 = now
         t = now - self._t0
 
-        fast = build_fast(self.robot, t=t, loop_dt_ms=loop_dt_ms)
-        diag = build_diag(self.robot, t=t)
-        imu = build_imu(self.robot, t=t)
+        send_diag = self._cycle % self.diag_every == 0
+        row: Dict[str, float] = {}
 
-        self.udp.send(fast)
-        if self._cycle % self.diag_every == 0:
-            self.udp.send(diag)
+        for part in self.parts:
+            fast = build_fast(part, t=t, loop_dt_ms=loop_dt_ms)
+            diag = build_diag(part, t=t)
+            self.udp.send(fast)
+            if send_diag:
+                self.udp.send(diag)
+            row.update(fast)
+            row.update(diag)
+
+        # IMU 는 로봇 전체 것이라 팔다리마다 반복하지 않음. 몸통 센서는 어느 다리의
+        # 것도 아니고, 다리 센서도 개체 이름으로 찾으므로 한 번만 찍으면 됨.
+        imu = build_imu(self.robot, t=t)
         if self.has_imu:
             self.udp.send(imu)
-        self._cycle += 1
-
-        row = dict(fast)
-        row.update(diag)
         row.update(imu)
+
+        self._cycle += 1
         self.csv.write(row)
         return row
 

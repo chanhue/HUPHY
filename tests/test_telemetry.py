@@ -17,6 +17,7 @@ import pytest
 from huphy import telemetry
 from huphy.sensors.base import ImuState
 from huphy.telemetry import snapshot
+from huphy.telemetry import Telemetry
 from huphy.telemetry.csv_log import CsvSink
 from huphy.telemetry.udp import MTU_LIMIT, UdpSink
 
@@ -672,3 +673,107 @@ class TestImuPacket:
             except socket.timeout:
                 break
         assert not any(any(k.startswith("imu/") for k in p) for p in packets)
+
+
+# ===========================================================================
+# 팔다리가 여럿일 때
+# ===========================================================================
+class FakeComposite:
+    """팔다리 둘을 든 합성 로봇. 텔레메트리가 쓰는 부분만 채움."""
+
+    name = "biped"
+
+    def __init__(self, parts=None, imus=()):
+        self.id = "huphy"
+        self.parts = tuple(
+            parts if parts is not None
+            else (FakeRobot("right_leg"), FakeRobot("left_leg"))
+        )
+        self.imus = tuple(imus)
+
+    @property
+    def all_imus(self):
+        return self.imus + tuple(i for p in self.parts for i in getattr(p, "imus", ()))
+
+    def imu_states(self):
+        return {imu.name: imu.read() for imu in self.all_imus}
+
+
+class TestComposite:
+    def test_parts_of_a_single_robot_is_itself(self, robot):
+        assert snapshot.parts(robot) == (robot,)
+
+    def test_parts_of_a_composite_are_the_limbs(self):
+        composite = FakeComposite()
+        assert snapshot.parts(composite) == composite.parts
+
+    def test_columns_keep_the_single_leg_layout(self):
+        """`huphy/right_leg/knee/pos` 처럼 깊어지면 예전 로그와 안 맞음."""
+        names = snapshot.field_names(FakeComposite())
+        assert "right_leg/knee/pos" in names
+        assert "huphy/right_leg/knee/pos" not in names
+
+    def test_both_limbs_get_columns(self):
+        names = snapshot.field_names(FakeComposite())
+        assert "right_leg/knee/pos" in names
+        assert "left_leg/knee/pos" in names
+
+    def test_one_time_column_appears_once(self):
+        names = snapshot.field_names(FakeComposite())
+        assert names.count("t") == 1
+
+    def test_a_row_covers_both_limbs(self, tmp_path):
+        """같은 시각의 두 다리를 나란히 봐야 함."""
+        composite = FakeComposite()
+        tele = Telemetry(composite, csv_path=str(tmp_path / "log.csv"))
+        row = tele.record()
+        tele.close()
+
+        assert row["right_leg/knee/pos"] == 10.0
+        assert row["left_leg/knee/pos"] == 10.0
+
+    def test_the_row_matches_the_columns(self, tmp_path):
+        """열과 값이 어긋나면 CSV 가 밀림."""
+        composite = FakeComposite()
+        tele = Telemetry(composite, csv_path=str(tmp_path / "log.csv"))
+        row = tele.record()
+        tele.close()
+
+        assert set(row) == set(tele.fields)
+
+    def test_udp_sends_one_packet_per_limb(self, receiver):
+        """합쳐 보내면 MTU 를 넘어 조각남. 조각 하나만 잃어도 전체가 버려짐."""
+        host, port = receiver.getsockname()
+        tele = Telemetry(FakeComposite(), host=host, port=port)
+        tele.open()
+        tele.record()
+        tele.close()
+
+        seen = []
+        for _ in range(4):
+            try:
+                seen.append(json.loads(receiver.recv(65535)))
+            except socket.timeout:
+                break
+
+        fast = [p for p in seen if "right_leg/knee/pos" in p or "left_leg/knee/pos" in p]
+        assert len(fast) == 2
+        assert not any(
+            "right_leg/knee/pos" in p and "left_leg/knee/pos" in p for p in seen
+        )
+
+    def test_imu_is_recorded_once_for_the_robot(self):
+        """몸통 센서는 어느 다리의 것도 아님. 다리마다 반복하지 않음."""
+        composite = FakeComposite(imus=[FakeImu("torso")])
+        names = snapshot.field_names(composite)
+        assert names.count("imu/torso/gx") == 1
+
+    def test_leg_sensors_land_in_the_same_row(self):
+        """몸통 센서와 다리 센서가 한 줄에 같이 있어야 대조가 됨."""
+        right = FakeRobot("right_leg")
+        right.imus = (FakeImu("shin"),)
+        composite = FakeComposite(parts=(right,), imus=[FakeImu("torso")])
+
+        names = snapshot.field_names(composite)
+        assert "imu/torso/gx" in names
+        assert "imu/shin/gx" in names

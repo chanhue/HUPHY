@@ -152,6 +152,28 @@ def _limb_of(robot: Any) -> str:
     return robot.id or robot.name
 
 
+def parts(robot: Any) -> Tuple[Any, ...]:
+    """기록 단위. 합성 로봇이면 팔다리들, 아니면 자기 자신 하나.
+
+    **팔다리마다 따로 찍음.** 합성 로봇을 통째로 한 단위로 보면 필드 이름이
+    `huphy/right_leg/knee/pos` 처럼 한 겹 깊어져, 다리 하나로 돌리던 때의 로그·그래프
+    레이아웃과 안 맞음. 팔다리별로 찍으면 `right_leg/knee/pos` 그대로임.
+
+    UDP 를 팔다리마다 한 패킷씩 보내는 근거이기도 함 -- 합치면 MTU 를 넘음
+    (`merge` 참조).
+    """
+    return tuple(getattr(robot, "parts", ())) or (robot,)
+
+
+def imus_of(robot: Any) -> Tuple[Any, ...]:
+    """이 로봇에서 값을 낼 수 있는 IMU 전부.
+
+    합성 로봇은 자기가 든 것과 팔다리가 든 것을 합쳐 `all_imus` 로 냄 -- 몸통
+    센서와 다리 센서가 한 줄에 같이 있어야 대조가 됨.
+    """
+    return tuple(getattr(robot, "all_imus", None) or getattr(robot, "imus", ()))
+
+
 # ===========================================================================
 # 필드 목록
 # ===========================================================================
@@ -187,7 +209,7 @@ def imu_field_names(robot: Any) -> Tuple[str, ...]:
     예전 로그·그래프 레이아웃과 안 맞음.
     """
     names = ["t"]
-    for imu in getattr(robot, "imus", ()):
+    for imu in imus_of(robot):
         head = f"imu/{imu.name}"
         names.extend(f"{head}/{f}" for f in IMU_FIELDS)
         names.extend(f"{head}/{f}" for f in _extra_fields(imu))
@@ -199,10 +221,18 @@ def imu_field_names(robot: Any) -> Tuple[str, ...]:
 def field_names(robot: Any) -> Tuple[str, ...]:
     """CSV 열. 빠른 것·진단·IMU 를 합친 것임. 순서가 열 순서임.
 
-    `t` 는 셋 다에 있으므로 한 번만 넣음.
+    **팔다리가 여럿이면 전부 덮음.** 한 줄에 양다리가 같이 들어가야 같은 시각의
+    두 다리를 나란히 볼 수 있음.
+
+    `t` 는 셋 다에 있으므로 한 번만 넣음. IMU 는 로봇 전체 것이라 팔다리마다
+    반복하지 않음.
     """
-    out = list(fast_field_names(robot))
-    for name in diag_field_names(robot) + imu_field_names(robot):
+    out: list = []
+    for part in parts(robot):
+        for name in fast_field_names(part) + diag_field_names(part):
+            if name not in out:
+                out.append(name)
+    for name in imu_field_names(robot):
         if name not in out:
             out.append(name)
     return tuple(out)
@@ -311,7 +341,7 @@ def build_imu(robot: Any, *, t: float) -> Dict[str, float]:
     states = _imu_states(robot)
     now = time.monotonic()
 
-    for imu in getattr(robot, "imus", ()):
+    for imu in imus_of(robot):
         head = f"imu/{imu.name}"
         extra_names = _extra_fields(imu)
         state = states.get(imu.name)
@@ -426,7 +456,7 @@ def _imu_names(robot: Any) -> Tuple[str, ...]:
 
     `Robot` 계약에 없는 선택 기능임 -- IMU 가 없는 로봇도 그대로 돎.
     """
-    return tuple(imu.name for imu in getattr(robot, "imus", ()))
+    return tuple(imu.name for imu in imus_of(robot))
 
 
 def _imu_states(robot: Any) -> Dict[str, Any]:
