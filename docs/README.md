@@ -6,6 +6,7 @@
 architecture.md    계층과 의존 방향. 왜 그렇게 나눴나
 flow_diagrams.md   누가 누구를 부르나. 그림
 cycle.md           한 주기. 값이 어떤 모양으로 어디를 지나나
+full_robot.md      다리 하나를 어떻게 쓰고 있나. 양다리로 가려면
 build_log.md       무엇을 어떤 순서로 만들었나. 각 단계의 중점
 issues.md          구현하면서 마주친 판단·미확인 사항
 motor_setup.md     출하 상태 모터 세팅. 보낼 프레임까지
@@ -23,6 +24,7 @@ monitoring.md      무엇을 왜 보는가
 | 계층이 왜 이렇게 나뉘었나 | [architecture.md](architecture.md) |
 | 이 함수가 어디서 불리나 | [flow_diagrams.md](flow_diagrams.md) |
 | 값이 어떤 모양으로 흘러가나 | [cycle.md](cycle.md) |
+| 양다리를 붙이려면 무엇이 필요한가 | [full_robot.md](full_robot.md) |
 | 왜 이 순서로 만들었나 | [build_log.md](build_log.md) |
 | 이 값이 왜 이렇게 정해졌나 | [issues.md](issues.md) |
 | 그래프에서 무엇을 보나 | [monitoring.md](monitoring.md) |
