@@ -43,8 +43,21 @@ socketcan 채널은 커널이 관리함. 속도를 포함한 설정이 채널을
 
 지금은 제어 루프 한 곳에서만 부름. 송신에만 락을 걸어 프레임이 섞이지 않게 함.
 
-**수신 전용 스레드를 두면 이 가정이 깨짐.** 그때 락 구성을 다시 봐야 함 —
-수신 스레드가 락을 쥔 채 `recv` 에서 블로킹하면 송신이 그만큼 밀림.
+## 수신 스레드
+
+버스마다 하나씩 둘 수 있음 (`reader=True`). 켜면 `recv` 를 기다리는 일이 제어
+루프에서 빠짐 — 프레임은 백그라운드에서 큐에 쌓이고, `drain` 은 큐에서 꺼내기만
+함.
+
+    켜기 전    수거 대기가 버스 수만큼 곱해짐      can0 기다림 -> can1 기다림
+    켜고 나서  두 버스가 동시에 받음               큐에서 꺼내기만
+
+**수신 스레드는 송신 락을 잡지 않음.** 잡으면 `recv` 에서 블로킹하는 동안 송신이
+밀려, 스레드를 둔 이유가 사라짐. 공유하는 것은 프레임 큐뿐이고, `deque` 의
+`append`/`popleft` 가 원자적이라 락이 필요 없음.
+
+닫을 때는 **스레드를 먼저 세우고** 채널을 닫음. 순서가 반대면 닫힌 소켓에서
+`recv` 를 부르게 됨.
 """
 
 from __future__ import annotations
@@ -52,6 +65,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence
 
@@ -65,6 +79,16 @@ DEFAULT_POLL_S = 0.0002
 
 DEFAULT_DRAIN_S = 0.002
 """수거에 쓸 총 시간. 100Hz 예산 10ms 의 20%."""
+
+RX_QUEUE_MAX = 4096
+"""수신 스레드가 쌓아 둘 최대 프레임 수. 넘으면 **오래된 것부터 버림.**
+
+버리는 쪽이 맞음 -- 소비가 밀렸다는 뜻이고, 그때 남은 옛 프레임은 이미 지난 주기의
+상태임. 몇 개 버렸는지는 `rx_dropped` 로 셈.
+"""
+
+READER_JOIN_S = 0.5
+"""수신 스레드가 끝나기를 기다리는 시간. `recv` 한 번의 대기보다 넉넉해야 함."""
 
 
 @dataclass(frozen=True)
@@ -99,12 +123,20 @@ class CanCounters:
     drain_timeouts: int = 0
     """기대한 개수를 못 채우고 총 시간을 다 쓴 횟수."""
 
+    rx_dropped: int = 0
+    """수신 큐가 차서 버린 프레임 수. **수신 스레드를 켰을 때만 늘어남.**
+
+    0 이 아니면 소비가 밀린 것임 -- 제어 루프가 주기를 못 지키고 있다는 신호로,
+    `loop_dt` 와 같이 봐야 함.
+    """
+
     def reset(self) -> None:
         self.tx_errors = 0
         self.rx_errors = 0
         self.frames_sent = 0
         self.frames_received = 0
         self.drain_timeouts = 0
+        self.rx_dropped = 0
 
     def as_fields(self) -> Dict[str, int]:
         """0이어도 모든 키를 냄. 필드가 중간에 생기면 그래프가 끊김."""
@@ -114,6 +146,7 @@ class CanCounters:
             "can.frames_sent": self.frames_sent,
             "can.frames_received": self.frames_received,
             "can.drain_timeouts": self.drain_timeouts,
+            "can.rx_dropped": self.rx_dropped,
         }
 
 
@@ -129,13 +162,28 @@ class CanBus:
         channel: str,
         *,
         interface: str = DEFAULT_INTERFACE,
+        reader: bool = False,
     ) -> None:
         self.channel = channel
         self.interface = interface
+        self.use_reader = bool(reader)
+        """수신 스레드를 둘지. `connect()` 가 이 값을 보고 시작함.
+
+        **기본은 끔.** 스레드가 없으면 `drain` 이 직접 `recv` 를 부름 -- 다리
+        하나만 돌릴 때는 기다릴 버스가 하나뿐이라 얻는 것이 없음.
+        """
 
         self._bus = None
         self._tx_lock = threading.Lock()
         self.counters = CanCounters()
+
+        self._rx: "deque[CanFrame]" = deque(maxlen=RX_QUEUE_MAX)
+        """수신 스레드가 쌓는 곳. **락이 없음** -- `deque` 의 `append`/`popleft`
+        가 원자적이라 필요 없고, 송신 락과 얽히지 않게 하려는 것이기도 함.
+        """
+
+        self._reader: Optional[threading.Thread] = None
+        self._reader_stop = threading.Event()
 
     def __repr__(self) -> str:
         state = "연결됨" if self.is_connected else "끊김"
@@ -179,8 +227,15 @@ class CanBus:
 
         logger.info("CAN 연결됨: %s", self)
 
+        if self.use_reader:
+            self.start_reader()
+
     def disconnect(self) -> None:
-        """채널을 닫음. 여러 번 불려도 안전함."""
+        """채널을 닫음. 여러 번 불려도 안전함.
+
+        **수신 스레드를 먼저 세움.** 순서가 반대면 닫힌 소켓에서 `recv` 를 부름.
+        """
+        self.stop_reader()
         if self._bus is None:
             return
         try:
@@ -201,6 +256,84 @@ class CanBus:
         if self._bus is None:
             raise ConnectionError(f"{self.channel} 이 연결되지 않음. connect() 를 먼저 부를 것")
         return self._bus
+
+    # ---- 수신 스레드 -------------------------------------------------------
+    @property
+    def reader_running(self) -> bool:
+        return self._reader is not None and self._reader.is_alive()
+
+    def start_reader(self, *, poll_s: float = DEFAULT_POLL_S) -> None:
+        """백그라운드로 프레임을 받아 큐에 쌓기 시작함. 여러 번 불려도 안전함.
+
+        **제어 루프에서 기다림을 뺌.** 버스가 둘이면 순차 수거의 총 대기가 두 배가
+        되는데, 스레드를 두면 두 채널이 동시에 받고 `drain` 은 큐에서 꺼내기만 함.
+
+        `daemon=True` 로 둠 -- 프로세스가 죽을 때 이 스레드가 붙잡지 않게 함.
+        정상 종료 경로는 `stop_reader` 임.
+        """
+        if self.reader_running:
+            return
+        self._require()
+        self._reader_stop.clear()
+        self._reader = threading.Thread(
+            target=self._read_loop,
+            args=(float(poll_s),),
+            name=f"can-rx-{self.channel}",
+            daemon=True,
+        )
+        self._reader.start()
+        logger.info("%s 수신 스레드 시작", self.channel)
+
+    def stop_reader(self) -> None:
+        """수신 스레드를 세움. 여러 번 불려도 안전함.
+
+        기다려 주는 이유: 스레드가 아직 `recv` 안에 있는데 채널을 닫으면 닫힌
+        소켓을 건드림.
+        """
+        if self._reader is None:
+            return
+        self._reader_stop.set()
+        self._reader.join(timeout=READER_JOIN_S)
+        if self._reader.is_alive():
+            logger.warning("%s 수신 스레드가 제때 안 끝남", self.channel)
+        self._reader = None
+
+    def _read_loop(self, poll_s: float) -> None:
+        """스레드 본체. **송신 락을 잡지 않음.**
+
+        잡으면 `recv` 에서 블로킹하는 동안 송신이 밀려, 스레드를 둔 이유가 사라짐.
+
+        예외가 나도 멈추지 않음 -- 채널이 닫히는 중일 수도 있고, 한 번의 실패로
+        수신이 통째로 죽으면 그 뒤 모든 모터가 무응답으로 보임. 멈춤 신호는
+        `stop_reader` 뿐임.
+        """
+        bus = self._bus
+        while not self._reader_stop.is_set():
+            try:
+                msg = bus.recv(timeout=poll_s)
+            except Exception as e:
+                if self._reader_stop.is_set():
+                    break
+                self.counters.rx_errors += 1
+                logger.debug("%s 수신 스레드 예외: %s", self.channel, e)
+                time.sleep(poll_s)
+                continue
+            if msg is None:
+                continue
+            if len(self._rx) == self._rx.maxlen:
+                # 큐가 참 -- 소비가 밀린 것임. 오래된 것부터 밀려나감.
+                self.counters.rx_dropped += 1
+            self._rx.append(_frame_of(msg))
+
+    def _take(self, limit: int) -> List[CanFrame]:
+        """큐에 있는 것을 최대 `limit` 개 꺼냄. 없으면 빈 목록."""
+        out: List[CanFrame] = []
+        while len(out) < limit:
+            try:
+                out.append(self._rx.popleft())
+            except IndexError:
+                break
+        return out
 
     # ---- 송신 -------------------------------------------------------------
     def send(self, frame: CanFrame) -> bool:
@@ -252,7 +385,15 @@ class CanBus:
 
         예외를 던지지 않음. 한 주기에 프레임이 덜 오는 것은 흔한 일이고, 그때마다
         제어 루프가 죽으면 안 됨. 몇 개 왔는지는 반환값 길이로 알 수 있음.
+
+        **수신 스레드가 돌고 있으면 큐에서 꺼내기만 함.** `recv` 를 부르지 않으므로
+        두 버스의 대기가 겹침.
         """
+        if self.reader_running:
+            return self._drain_queue(
+                expect=expect, timeout_s=timeout_s, poll_s=poll_s, max_frames=max_frames
+            )
+
         bus = self._require()
         out: List[CanFrame] = []
         deadline = time.monotonic() + max(0.0, float(timeout_s))
@@ -270,14 +411,7 @@ class CanBus:
                 break
 
             if msg is not None:
-                out.append(
-                    CanFrame(
-                        can_id=int(msg.arbitration_id),
-                        data=bytes(msg.data),
-                        is_extended=bool(msg.is_extended_id),
-                        stamp=time.monotonic(),
-                    )
-                )
+                out.append(_frame_of(msg))
                 continue
 
             # 큐가 비었음
@@ -298,6 +432,44 @@ class CanBus:
         """
         return len(self.drain(timeout_s=0.0, poll_s=0.0, max_frames=max_frames))
 
+    def _drain_queue(
+        self,
+        *,
+        expect: Optional[int],
+        timeout_s: float,
+        poll_s: float,
+        max_frames: int,
+    ) -> List[CanFrame]:
+        """수신 스레드가 쌓아 둔 것을 꺼냄. `recv` 를 부르지 않음.
+
+        `expect` 를 채울 때까지 짧게 자며 기다림. 자는 동안 다른 버스도 자기
+        스레드로 받고 있으므로, 순차 수거처럼 대기가 곱해지지 않음.
+        """
+        out = self._take(max_frames if expect is None else expect)
+        if expect is None or len(out) >= expect:
+            self.counters.frames_received += len(out)
+            return out
+
+        deadline = time.monotonic() + max(0.0, float(timeout_s))
+        while len(out) < expect and time.monotonic() < deadline:
+            time.sleep(max(0.0, float(poll_s)))
+            out.extend(self._take(expect - len(out)))
+
+        if len(out) < expect:
+            self.counters.drain_timeouts += 1
+        self.counters.frames_received += len(out)
+        return out
+
+
+def _frame_of(msg) -> CanFrame:
+    """`python-can` 의 `Message` 를 중립 프레임으로. **여기서만 변환함.**"""
+    return CanFrame(
+        can_id=int(msg.arbitration_id),
+        data=bytes(msg.data),
+        is_extended=bool(msg.is_extended_id),
+        stamp=time.monotonic(),
+    )
+
 
 def drain_all(
     buses: Iterable[CanBus],
@@ -307,10 +479,11 @@ def drain_all(
 ) -> Dict[str, List[CanFrame]]:
     """여러 버스를 수거함. 채널 이름으로 묶어 반환함.
 
-    지금은 순차라 총 대기가 버스 수만큼 곱해짐 (이슈 #10). 양다리에서 문제가 되면
-    버스마다 수신 스레드를 두어 제어 루프에서 수거를 없애야 함.
+    **수신 스레드를 켜 두면 대기가 겹침** — 각 버스가 자기 스레드로 이미 받아 뒀고
+    여기서는 큐에서 꺼내기만 함. 끄면 순차라 총 대기가 버스 수만큼 곱해짐
+    (이슈 #10).
 
-    그래도 이 함수를 두는 이유: 호출부가 "전부 보내고 전부 수거" 순서를 지키게 됨.
+    이 함수를 두는 이유: 호출부가 "전부 보내고 전부 수거" 순서를 지키게 됨.
     버스별로 보내고 바로 수거하면 두 다리의 명령 시각이 벌어짐.
     """
     return {

@@ -356,6 +356,7 @@ class TestCounters:
             "can.frames_sent",
             "can.frames_received",
             "can.drain_timeouts",
+            "can.rx_dropped",
         }
         assert all(v == 0 for v in fields.values())
 
@@ -367,3 +368,129 @@ class TestCounters:
     def test_prefixed_for_telemetry(self):
         """다른 계층의 카운터와 섞이지 않게 접두사를 붙임."""
         assert all(k.startswith("can.") for k in CanCounters().as_fields())
+
+
+# ===========================================================================
+# 수신 스레드
+# ===========================================================================
+class TestReader:
+    def test_off_by_default(self, bus):
+        """다리 하나면 기다릴 버스가 하나뿐이라 얻는 것이 없음."""
+        assert not bus.reader_running
+
+    def test_connect_starts_it_when_asked(self, fake_can):
+        b = CanBus("can1", reader=True)
+        b.connect()
+        try:
+            assert b.reader_running
+        finally:
+            b.disconnect()
+
+    def test_disconnect_stops_it(self, fake_can):
+        b = CanBus("can1", reader=True)
+        b.connect()
+        b.disconnect()
+        assert not b.reader_running
+
+    def test_the_thread_stops_before_the_channel_closes(self, fake_can):
+        """순서가 반대면 닫힌 소켓에서 recv 를 부름."""
+        b = CanBus("can1", reader=True)
+        b.connect()
+        raw = FakeCanBus.instances[-1]
+        b.disconnect()
+        assert not b.reader_running
+        assert raw.shutdown_called == 1
+
+    def test_start_twice_is_noop(self, fake_can):
+        b = CanBus("can1", reader=True)
+        b.connect()
+        try:
+            first = b._reader
+            b.start_reader()
+            assert b._reader is first
+        finally:
+            b.disconnect()
+
+    def test_stop_twice_is_safe(self, fake_can):
+        b = CanBus("can1", reader=True)
+        b.connect()
+        b.stop_reader()
+        b.stop_reader()
+        assert not b.reader_running
+
+    def test_drain_reads_from_the_queue(self, fake_can):
+        """스레드가 돌면 drain 은 recv 를 부르지 않음 -- 두 버스의 대기가 겹침."""
+        b = CanBus("can1", reader=True)
+        b.connect()
+        try:
+            raw = FakeCanBus.instances[-1]
+            raw.rx.extend(FakeMessage(i, bytes(8)) for i in (7, 8))
+            got = _wait_for(b, 2)
+            assert [f.can_id for f in got] == [7, 8]
+        finally:
+            b.disconnect()
+
+    def test_frames_keep_their_payload(self, fake_can):
+        b = CanBus("can1", reader=True)
+        b.connect()
+        try:
+            payload = bytes([1, 2, 3, 4, 5, 6, 7, 8])
+            FakeCanBus.instances[-1].rx.append(FakeMessage(0x1234, payload, True))
+            got = _wait_for(b, 1)
+            assert got[0].data == payload
+            assert got[0].is_extended is True
+        finally:
+            b.disconnect()
+
+    def test_a_short_drain_counts_a_timeout(self, fake_can):
+        """기대한 개수를 못 채우면 세어 둠. 원인 좁히기의 시작점임."""
+        b = CanBus("can1", reader=True)
+        b.connect()
+        try:
+            b.drain(expect=6, timeout_s=0.005)
+            assert b.counters.drain_timeouts == 1
+        finally:
+            b.disconnect()
+
+    def test_a_full_queue_drops_the_oldest(self, fake_can):
+        """소비가 밀린 것임. 남은 옛 프레임은 이미 지난 주기의 상태임."""
+        b = CanBus("can1", reader=True)
+        b.connect()
+        try:
+            b.stop_reader()
+            for i in range(b._rx.maxlen + 3):
+                b._rx.append(frame(i))
+            assert len(b._rx) == b._rx.maxlen
+        finally:
+            b.disconnect()
+
+    def test_flush_empties_the_queue(self, fake_can):
+        """직전 주기의 응답이 남아 있으면 이번 주기의 것으로 오해함."""
+        b = CanBus("can1", reader=True)
+        b.connect()
+        try:
+            FakeCanBus.instances[-1].rx.extend(FakeMessage(i, bytes(8)) for i in (7, 8))
+            _wait_for(b, 2, take=False)
+            assert b.flush_rx() == 2
+            assert b.drain(expect=1, timeout_s=0.001) == []
+        finally:
+            b.disconnect()
+
+    def test_sending_does_not_wait_for_the_reader(self, fake_can):
+        """수신 스레드가 송신 락을 잡으면 스레드를 둔 이유가 사라짐."""
+        b = CanBus("can1", reader=True)
+        b.connect()
+        try:
+            assert b.send_many([frame(7), frame(8)]) == 2
+        finally:
+            b.disconnect()
+
+
+def _wait_for(bus, count, *, take=True, timeout_s=1.0):
+    """수신 스레드가 큐를 채울 때까지 기다림. 가짜 버스는 즉시 주지 않음."""
+    import time as _time
+
+    deadline = _time.monotonic() + timeout_s
+    while len(bus._rx) < count and _time.monotonic() < deadline:
+        _time.sleep(0.001)
+    return bus.drain(expect=count, timeout_s=0.01) if take else None
