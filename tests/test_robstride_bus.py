@@ -393,7 +393,8 @@ class TestRefreshStates:
 class TestFault:
     def test_decodes_bits(self, leg, raw):
         word = 1 << T.FAULT_BITS["overtemperature"]
-        raw.responses[10] = FakeMessage(10, bytes([10, 0, 0, 0, word, 0, 0, 0]))
+        # 리틀 엔디안 — data[1] 이 최하위 바이트 (codec/mit.py decode_fault)
+        raw.responses[10] = FakeMessage(10, bytes([10]) + word.to_bytes(4, "little") + bytes(3))
         fault = leg.read_fault(10)
         assert fault.ok is False
         assert fault.active() == ["overtemperature"]

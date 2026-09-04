@@ -104,10 +104,10 @@ class FakeBus:
         d = msg.data
         if d[0] == 0xFF and d[7] == T.CMD_FAULT and d[6] == T.F_CMD_FAULT_QUERY:
             word = FakeBus.faults.get(mid, 0)
-            self.rx.append(FakeMessage(mid, bytes([
-                mid, (word >> 24) & 0xFF, (word >> 16) & 0xFF,
-                (word >> 8) & 0xFF, word & 0xFF, 0, 0, 0,
-            ])))
+            # 고장값은 리틀 엔디안임 (codec/mit.py decode_fault 주석 참조).
+            self.rx.append(FakeMessage(
+                mid, bytes([mid]) + int(word).to_bytes(4, "little") + bytes(3)
+            ))
             return
         if d[0] != 0xFF:                        # MIT 명령이면 목표를 따라감
             enc = T.encoding_for(MODELS[mid])

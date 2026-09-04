@@ -216,18 +216,30 @@ class TestDecodeFault:
         assert word == 0
 
     def test_bit_extraction(self):
-        """bit0 = 과열."""
-        mid, word = mit.decode_fault(bytes([10, 0x00, 0x00, 0x00, 0x01, 0, 0, 0]))
+        """bit0 = 과열. 고장값은 리틀 엔디안이라 data[1] 이 최하위 바이트임."""
+        mid, word = mit.decode_fault(bytes([10, 0x01, 0x00, 0x00, 0x00, 0, 0, 0]))
         assert mid == 10
         assert word & (1 << T.FAULT_BITS["overtemperature"])
 
     def test_high_bit(self):
-        """bit14 = 스톨/과부하. 상위 바이트에 실림."""
+        """bit14 = 스톨/과부하. 리틀 엔디안이라 두 번째 바이트에 실림."""
         word = 1 << T.FAULT_BITS["stall_overload"]
-        data = bytes([10, (word >> 24) & 0xFF, (word >> 16) & 0xFF,
-                      (word >> 8) & 0xFF, word & 0xFF, 0, 0, 0])
+        data = bytes([10]) + word.to_bytes(4, "little") + bytes(3)
         _, decoded = mit.decode_fault(data)
         assert decoded & (1 << T.FAULT_BITS["stall_overload"])
+
+    def test_bench_overvoltage_frame_2026_09_05(self):
+        """실측 회귀 시험 — 벤치에서 두 모터가 동시에 멈췄을 때 실제로 온 바이트.
+
+        빅 엔디안으로 읽으면 0x08000000(비트 27, 매뉴얼에 없는 값)이 되어 무슨 고장인지
+        알 수 없었음. 리틀 엔디안으로 읽어야 비트 3 = 과전압이 나오고, 두 모터가 한 전원에서
+        동시에 감속한 상황과도 맞음. 벤더 공식 SDK 도 같은 프레임을
+        ``struct.unpack("<LL", data)`` 로 읽음.
+        """
+        _, word = mit.decode_fault(bytes([4, 0x08, 0x00, 0x00, 0x00, 0, 0, 0]))
+        assert word == 0x00000008
+        assert word & (1 << T.FAULT_BITS["overvoltage"])
+        assert not word & (1 << T.FAULT_BITS["stall_overload"])
 
     def test_rejects_short_frame(self):
         with pytest.raises(ValueError, match="5바이트"):
