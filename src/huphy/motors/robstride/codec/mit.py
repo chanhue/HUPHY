@@ -141,9 +141,33 @@ def decode_fault(data: bytes) -> Tuple[int, int]:
 
     일반 상태 프레임과 CAN ID가 같아 겉으로 구분되지 않으므로, 조회 명령을 보낸
     직후의 첫 응답으로 간주해야 함.
+
+    **고장값은 리틀 엔디안임 (2026-09-05 수정).** 상태 프레임의 위치·속도·토크·온도는
+    빅 엔디안으로 채워지지만(`decode_state`), 고장/경고값은 그렇지 않음. 같은 프로토콜
+    안에서 프레임마다 바이트 순서가 다름.
+
+    근거 둘.
+
+    1. 벤더 매뉴얼(`RS03/RS04 User Manual 251112`, 통신 타입 21 표): 데이터 필드는
+       ``Byte0~3 고장값 / Byte4~7 경고값``. 파라미터 프레임 표에는 "the low byte is
+       first and the high byte is second" 라고 적혀 있음.
+    2. 벤더 공식 SDK(`ROBSTRIDE-DYNAMICS/Robstride-Dynamics-Python-SDK`,
+       `robstride_dynamics/bus.py`)는 같은 프레임을 ``struct.unpack("<LL", data)`` 로
+       읽음 — 리틀 엔디안 32비트 두 개.
+
+    빅 엔디안으로 읽으면 **정의된 고장이 정의되지 않은 값으로 둔갑함.** 실측(벤치,
+    2026-09-05): 두 모터가 동시에 정지했을 때 바이트가 ``08 00 00 00`` 이었는데,
+    빅 엔디안으로 읽으면 ``0x08000000``(비트 27, 매뉴얼에 없는 값)이 되고 리틀
+    엔디안으로 읽으면 ``0x00000008``(비트 3, 과전압)이 됨. 두 모터가 한 전원에서
+    동시에 감속했으므로 과전압이 물리적으로도 맞음. 진단이 통째로 어긋났었음.
+
+    MIT 프로토콜(11비트 표준 프레임)에서는 데이터 첫 바이트가 모터 id 라 매뉴얼의
+    바이트 번호가 한 칸 밀림 — 매뉴얼/공식 SDK 는 29비트 확장 프레임 기준이고 거기서는
+    모터 id 가 CAN ID 안에 들어감. 실측 응답: RS03 ``03 00 00 00 00``(5바이트),
+    RS04 ``04 00 00 00 00 00 00 00``(8바이트).
     """
     if len(data) < 5:
         raise ValueError(f"고장 프레임은 최소 5바이트 필요 (받은 길이 {len(data)})")
     motor_id = int(data[0])
-    word = (data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4]
+    word = int.from_bytes(data[1:5], "little")
     return motor_id, word
