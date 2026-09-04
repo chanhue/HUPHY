@@ -193,6 +193,19 @@ class TestDecodeState:
         assert math.radians(vel) == pytest.approx(-2.0, abs=0.05)
         assert tau == pytest.approx(-5.0, abs=0.02)
 
+    def test_bench_temperature_high_nibble_2026_09_05(self):
+        """실측 회귀 시험 — 온도 칸의 상위 4비트는 온도가 아님.
+
+        같은 모터·같은 순간에 수신기 경로는 0x814A(3309.8도), 커미셔닝 경로는
+        0x014A(33.0도)를 냈음. 0x214A(852.2도)도 관측됨. 셋 다 하위 12비트가
+        0x14A = 330 = 33.0도로 같음. 상위 4비트를 포함해 읽으면 방 온도로
+        설명되지 않는 값이 나오고, 33도짜리 모터가 과열로 차단됨.
+        """
+        for high in (0x0, 0x2, 0x8):
+            data = bytes([4, 0, 0, 0, 0, 0, (high << 4) | 0x1, 0x4A])
+            *_, temp = mit.decode_state(data, enc=RS02)
+            assert temp == pytest.approx(33.0), f"상위 니블 0x{high:X}"
+
     def test_rejects_short_frame(self):
         with pytest.raises(ValueError, match="8바이트"):
             mit.decode_state(bytes([1, 2, 3]), enc=RS02)
