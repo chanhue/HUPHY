@@ -2,6 +2,7 @@
 
     huphy-test --limb right_leg zero
     huphy-test --limb right_leg range
+    huphy-test --limb all zero          양다리를 같은 루프로
 
 두 가지임.
 
@@ -31,6 +32,18 @@
 
 `range` 는 설정한 한계에서 `--margin` 만큼 안쪽까지만 감. 한계는 하드스톱을 재서
 넣은 값이라 그대로 명령하면 스톱에 부딪힘.
+
+
+## 팔다리 여럿
+
+`--limb all` 이면 `kind: leg` 인 팔다리를 전부 세워 **한 루프로** 돌림. 관절
+이름 앞에 팔다리가 붙음 (`right_leg/knee`).
+
+프로세스를 둘 띄우는 것과 다름 -- 명령이 같은 주기에 나가고, 한쪽 통신이 끊기면
+**양쪽이 같이** 멈춤. 따로 띄우면 한쪽이 죽어도 다른 쪽은 계속 움직여 넘어짐.
+
+`zero` 를 양다리로 돌리는 것이 조립을 확인하는 첫 단계임 — 관절 전부가 0도이므로
+좌우가 어긋난 것이 눈으로 보임.
 """
 
 from __future__ import annotations
@@ -43,14 +56,15 @@ import sys
 import termios
 import threading
 import tty
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import ConfigError, LimbConfig, load_robot
 from ..control import ControlLoop, Mode, motions
+from ..robots.biped import join_name
 from ..robots.leg import ANKLE_JOINTS, SINGLE_JOINTS, Leg
-from .bringup import build_leg
+from .bringup import build_biped, build_leg
 from . import table
-from .commission import CONFIG_NAME, _find_config, _pick_limb
+from .commission import CONFIG_NAME, _find_config, _pick_limbs
 
 logger = logging.getLogger("huphy.selftest")
 
@@ -63,9 +77,26 @@ DEFAULT_PERIOD_S = 6.0
 
 
 # ===========================================================================
+# 팔다리 여럿
+# ===========================================================================
+def parts(robot) -> Tuple[Any, ...]:
+    """다리들. 합성 로봇이면 그 팔다리, 아니면 자기 자신 하나."""
+    return tuple(getattr(robot, "parts", ())) or (robot,)
+
+
+def named(robot, part, name: str) -> str:
+    """관절 이름. 합성 로봇이면 앞에 팔다리를 붙임.
+
+    다리 하나면 붙이지 않음 -- 붙이면 화면과 명령이 지금과 달라지는데, 구분할
+    대상이 없어 얻는 것이 없음.
+    """
+    return join_name(part.id, name) if getattr(robot, "parts", None) else name
+
+
+# ===========================================================================
 # 관절 한계
 # ===========================================================================
-def joint_limits(leg: Leg) -> Dict[str, Tuple[float, float]]:
+def joint_limits(robot) -> Dict[str, Tuple[float, float]]:
     """관절 이름 -> (최소, 최대). 관절 좌표계임.
 
     출처가 둘임.
@@ -78,16 +109,24 @@ def joint_limits(leg: Leg) -> Dict[str, Tuple[float, float]]:
     시험 범위를 씀.
 
     한계가 없는 관절은 빠짐 -- 아직 안 잰 것이라 어디까지 가도 되는지 모름.
+
+    팔다리가 여럿이면 이름 앞에 팔다리가 붙음. **다리마다 한계가 다름** -- 좌우가
+    거울상이라도 실측값이라 같지 않음.
     """
     out: Dict[str, Tuple[float, float]] = {}
-    for name in SINGLE_JOINTS:
-        limits = leg.config.motors[name].limits_deg
-        if limits is not None:
-            out[name] = (float(limits[0]), float(limits[1]))
+    for part in parts(robot):
+        for name in SINGLE_JOINTS:
+            limits = part.config.motors[name].limits_deg
+            if limits is not None:
+                out[named(robot, part, name)] = (float(limits[0]), float(limits[1]))
 
-    envelope = leg.kinematics.envelope
-    out["ankle_pitch"] = tuple(float(v) for v in envelope.pitch_deg)
-    out["ankle_roll"] = tuple(float(v) for v in envelope.roll_deg)
+        envelope = part.kinematics.envelope
+        out[named(robot, part, "ankle_pitch")] = tuple(
+            float(v) for v in envelope.pitch_deg
+        )
+        out[named(robot, part, "ankle_roll")] = tuple(
+            float(v) for v in envelope.roll_deg
+        )
     return out
 
 
@@ -225,7 +264,7 @@ class QuitWatcher:
 # ===========================================================================
 # 명령
 # ===========================================================================
-def _read_pose(leg: Leg, loop: ControlLoop, joints) -> Dict[str, float]:
+def _read_pose(robot, loop: ControlLoop, joints) -> Dict[str, float]:
     """지금 관절 각도를 읽음. 루프를 한 주기 돌려 상태를 받아 옴.
 
     MIT 모드에는 읽기 전용 명령이 없어서, 힘이 나가지 않는 명령을 보내고 그 응답을
@@ -235,27 +274,32 @@ def _read_pose(leg: Leg, loop: ControlLoop, joints) -> Dict[str, float]:
     따로 부름 -- 모터가 보고하는 값이 아니라 FK 로 푸는 값임.
     """
     loop.step(None, t=0.0)
-    observation = leg.get_observation()
+    observation = robot.get_observation()
 
     out: Dict[str, float] = {}
-    for name in joints:
-        if name in SINGLE_JOINTS:
-            value = observation.get(f"{name}.pos")
+    for part in parts(robot):
+        for name in SINGLE_JOINTS:
+            key = named(robot, part, name)
+            if key not in joints:
+                continue
+            value = observation.get(f"{named(robot, part, name)}.pos")
             if value is not None:
-                out[name] = float(value)
+                out[key] = float(value)
 
-    if any(name in ANKLE_JOINTS for name in joints):
-        pose = leg.ankle_pose()
+        wanted = [named(robot, part, n) for n in ANKLE_JOINTS]
+        if not any(k in joints for k in wanted):
+            continue
+        pose = part.ankle_pose()
         if pose is not None:
-            for name, value in zip(ANKLE_JOINTS, pose):
-                if name in joints:
-                    out[name] = float(value)
+            for key, value in zip(wanted, pose):
+                if key in joints:
+                    out[key] = float(value)
     return out
 
 
-def _run(leg: Leg, loop: ControlLoop, targets, motion, *, approach_s: float) -> int:
+def _run(robot, loop: ControlLoop, targets, motion, *, approach_s: float) -> int:
     """접근 -> 패턴. Ctrl-Q 까지 돎."""
-    start = _read_pose(leg, loop, targets)
+    start = _read_pose(robot, loop, targets)
     missing = [name for name in targets if name not in start]
     if missing:
         print(f"  상태를 못 읽은 관절: {missing}. 배선과 CAN id 를 확인할 것.")
@@ -275,41 +319,57 @@ def _run(leg: Leg, loop: ControlLoop, targets, motion, *, approach_s: float) -> 
     )
     if stats.missing_cycles:
         print(f"  응답이 빠진 주기: {stats.missing_cycles}")
+    if stats.link_loss is not None:
+        # 정상 종료와 구분되어야 함 -- 둘 다 조용히 끝남.
+        print(f"\n  ** 통신 두절로 멈춤: {stats.link_loss} **")
+        print("  배선과 CAN id 를 확인할 것. 양다리면 둘 다 멈췄음.")
+        return 1
     if not stats.kept_up:
         print("  주기를 못 지킴. 게인을 만지기 전에 이것부터 볼 것.")
         return 1
     return 0
 
 
-def cmd_zero(args, leg: Leg, loop: ControlLoop) -> int:
+def cmd_zero(args, robot, loop: ControlLoop) -> int:
     """관절 전부를 0도로 두고 붙잡음."""
-    joints = list(SINGLE_JOINTS) + list(ANKLE_JOINTS)
+    joints = [
+        named(robot, part, name)
+        for part in parts(robot)
+        for name in list(SINGLE_JOINTS) + list(ANKLE_JOINTS)
+    ]
     targets = {name: 0.0 for name in joints}
 
-    print(f"\n{leg.id} 영자세 유지 -- {len(joints)}개 관절을 0도로")
+    print(f"\n{robot.id} 영자세 유지 -- {len(joints)}개 관절을 0도로")
     print("  관절 전부가 0도이므로 어긋난 관절이 눈으로 보임.")
     print("  처지면 kp 가 부족하고, 부르르 떨면 kp 가 과함.")
+    if len(parts(robot)) > 1:
+        print("  양다리를 같은 루프로 돌림 -- 좌우가 어긋난 것도 눈으로 보임.")
     print(f"\n  {args.approach:.0f}초에 걸쳐 0도로 옮긴 뒤 그대로 유지합니다.")
 
-    return _run(leg, loop, targets, motions.hold(targets), approach_s=args.approach)
+    return _run(robot, loop, targets, motions.hold(targets), approach_s=args.approach)
 
 
-def cmd_range(args, leg: Leg, loop: ControlLoop) -> int:
+def cmd_range(args, robot, loop: ControlLoop) -> int:
     """관절마다 최소~최대를 오감."""
-    limits = joint_limits(leg)
+    limits = joint_limits(robot)
     inset = {name: _inset(span, args.margin) for name, span in limits.items()}
 
-    print(f"\n{leg.id} 가동 범위 왕복 -- 주기 {args.period:.1f}초")
+    print(f"\n{robot.id} 가동 범위 왕복 -- 주기 {args.period:.1f}초")
     print(f"  한계에서 {args.margin:.1f}도 안쪽까지만 감.\n")
     print("  " + table.header(("관절", 12, "<"), ("최소", 9), ("최대", 9)))
     for name, (lo, hi) in inset.items():
         print(f"  {name:<12} {lo:9.2f} {hi:9.2f}")
 
-    skipped = [n for n in SINGLE_JOINTS if n not in limits]
+    skipped = [
+        named(robot, part, n)
+        for part in parts(robot)
+        for n in SINGLE_JOINTS
+        if named(robot, part, n) not in limits
+    ]
     if skipped:
         print(
             f"\n  한계가 없어 빼는 관절: {skipped}.\n"
-            f"  huphy-commission --limb {leg.id} sweep 으로 먼저 잴 것."
+            f"  huphy-commission --limb <팔다리> sweep 으로 먼저 잴 것."
         )
 
     flat = [name for name, (lo, hi) in inset.items() if hi - lo < 1.0]
@@ -319,7 +379,7 @@ def cmd_range(args, leg: Leg, loop: ControlLoop) -> int:
     print(f"\n  {args.approach:.0f}초에 걸쳐 가운데로 옮긴 뒤 왕복을 시작합니다.")
 
     return _run(
-        leg,
+        robot,
         loop,
         midpoints(inset),
         cycle(inset, period_s=args.period),
@@ -350,7 +410,9 @@ def _add_common(parser, *, suppress: bool) -> None:
         help=f"기본값: 위로 올라가며 {CONFIG_NAME} 을 찾음",
     )
     parser.add_argument(
-        "--limb", default=default(None), help="팔다리 이름. 하나뿐이면 생략 가능"
+        "--limb",
+        default=default(None),
+        help="팔다리 이름. all 이면 다리 전부, 쉼표로 여럿. 하나뿐이면 생략 가능",
     )
     parser.add_argument(
         "--hz",
@@ -389,6 +451,7 @@ def build_parser() -> argparse.ArgumentParser:
             "예시:\n"
             "  --limb right_leg zero\n"
             "  --limb right_leg range --period 10 --margin 8\n"
+            "  --limb all zero                 양다리를 같은 루프로\n"
         ),
     )
     _add_common(p, suppress=False)
@@ -432,26 +495,35 @@ def main(argv=None) -> int:
     except ConfigError as e:
         raise SystemExit(str(e)) from None
 
-    limb: LimbConfig = _pick_limb(robot, args.limb)
-    leg = build_leg(
-        robot,
-        limb,
+    limbs: List[LimbConfig] = _pick_limbs(robot, args.limb)
+    options = dict(
         gain_scale=args.gain_scale,
         allow_uncalibrated=args.allow_uncalibrated,
     )
-    loop = ControlLoop(
-        leg,
-        hz=args.hz if args.hz else limb.control_hz,
-        mode=Mode.OBSERVE,
-    )
+
+    # 팔다리가 하나면 다리 그대로 씀 -- 관절 이름에 접두어가 붙지 않아 화면과
+    # 명령이 지금과 같음. 여럿이면 묶어야 명령이 같은 주기에 나감.
+    if len(limbs) == 1:
+        machine = build_leg(robot, limbs[0], **options)
+    else:
+        machine = build_biped(robot, limbs, **options)
+
+    # 팔다리마다 control_hz 가 다를 수 있음. 한 루프로 도는 이상 하나만 고를 수
+    # 있어 **가장 느린 쪽**에 맞춤 -- 빠른 쪽에 맞추면 느린 쪽이 매 주기 밀림.
+    hz = args.hz if args.hz else min(limb.control_hz for limb in limbs)
+    loop = ControlLoop(machine, hz=hz, mode=Mode.OBSERVE)
 
     try:
-        with leg:
-            return COMMANDS[args.command](args, leg, loop)
+        with machine:
+            return COMMANDS[args.command](args, machine, loop)
     except ConnectionError as e:
+        channels = " ".join(sorted({limb.channel for limb in limbs}))
         raise SystemExit(
             f"{e}\n채널이 올라와 있는지 확인할 것:\n"
-            f"  sudo ip link set {limb.channel} up type can bitrate 1000000"
+            + "\n".join(
+                f"  sudo ip link set {c} up type can bitrate 1000000"
+                for c in channels.split()
+            )
         ) from e
     except KeyboardInterrupt:
         print()

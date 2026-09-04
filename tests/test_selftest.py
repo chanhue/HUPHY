@@ -198,3 +198,75 @@ class TestParser:
     def test_a_command_is_required(self):
         with pytest.raises(SystemExit):
             selftest.build_parser().parse_args(["--limb", "right_leg"])
+
+
+# ===========================================================================
+# 팔다리가 여럿일 때
+# ===========================================================================
+class FakeBiped:
+    """`parts` 를 가진 로봇. 이름 붙이기와 한계 모으기만 봄."""
+
+    id = "huphy"
+
+    def __init__(self, parts):
+        self.parts = tuple(parts)
+
+
+def leg_named(name, limits=None):
+    leg = FakeLeg(limits)
+    leg.id = name
+    leg.config = LimbConfig(name=name, kind="leg", motors=leg.config.motors)
+    return leg
+
+
+class TestParts:
+    def test_a_single_leg_is_its_own_part(self):
+        leg = FakeLeg()
+        assert selftest.parts(leg) == (leg,)
+
+    def test_a_composite_lists_its_limbs(self):
+        left, right = leg_named("left_leg"), leg_named("right_leg")
+        assert selftest.parts(FakeBiped([left, right])) == (left, right)
+
+    def test_a_single_leg_keeps_bare_names(self):
+        """구분할 대상이 없으면 접두어가 얻는 것 없이 화면만 바꿈."""
+        leg = FakeLeg()
+        assert selftest.named(leg, leg, "knee") == "knee"
+
+    def test_a_composite_prefixes(self):
+        right = leg_named("right_leg")
+        assert selftest.named(FakeBiped([right]), right, "knee") == "right_leg/knee"
+
+
+class TestCompositeLimits:
+    def test_both_legs_appear(self):
+        biped = FakeBiped([leg_named("right_leg"), leg_named("left_leg")])
+        limits = selftest.joint_limits(biped)
+        assert "right_leg/knee" in limits
+        assert "left_leg/knee" in limits
+
+    def test_each_leg_keeps_its_own_numbers(self):
+        """좌우가 거울상이라도 실측값이라 같지 않음."""
+        biped = FakeBiped([
+            leg_named("right_leg", {"knee": (-20.0, 70.0)}),
+            leg_named("left_leg", {"knee": (-18.0, 72.0)}),
+        ])
+        limits = selftest.joint_limits(biped)
+        assert limits["right_leg/knee"] == (-20.0, 70.0)
+        assert limits["left_leg/knee"] == (-18.0, 72.0)
+
+    def test_an_unmeasured_joint_is_dropped_per_leg(self):
+        """한쪽만 안 잰 상태가 있을 수 있음."""
+        biped = FakeBiped([
+            leg_named("right_leg", {"knee": (-20.0, 70.0)}),
+            leg_named("left_leg", {}),
+        ])
+        limits = selftest.joint_limits(biped)
+        assert "right_leg/knee" in limits
+        assert "left_leg/knee" not in limits
+
+    def test_ankles_come_from_kinematics_per_leg(self):
+        biped = FakeBiped([leg_named("right_leg"), leg_named("left_leg")])
+        limits = selftest.joint_limits(biped)
+        assert limits["right_leg/ankle_pitch"] == (-40.0, 40.0)
+        assert limits["left_leg/ankle_roll"] == (-25.0, 25.0)

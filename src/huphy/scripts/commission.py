@@ -107,6 +107,43 @@ def _pick_limb(robot: RobotConfig, name: Optional[str]) -> LimbConfig:
     )
 
 
+ALL_LIMBS = "all"
+"""`--limb all` — 로봇 전체를 뜻함. `kind: leg` 인 팔다리를 전부 씀."""
+
+
+def _pick_limbs(robot: RobotConfig, name: Optional[str]) -> List[LimbConfig]:
+    """`--limb` 을 팔다리 목록으로 품. 하나만 골라도 목록으로 냄.
+
+        --limb all                  kind: leg 인 팔다리 전부
+        --limb right_leg            하나
+        --limb right_leg,left_leg   적은 순서대로
+        (생략)                       하나뿐이면 그것, 아니면 멈춤
+
+    `all` 이 `leg` 만 고르는 이유: 나중에 팔이 붙으면 같은 제어 패턴으로 움직일
+    수 없음. 팔까지 같이 돌릴 일이 생기면 그때 이름을 나열하면 됨.
+
+    **순서가 의미를 가짐.** 관절 이름 순서와 텔레메트리 열 순서가 이 순서를 따름.
+    """
+    if not name:
+        return [_pick_limb(robot, None)]
+
+    if name.strip() == ALL_LIMBS:
+        legs = list(robot.limbs_of_kind("leg").values())
+        if not legs:
+            raise SystemExit(
+                f"kind: leg 인 팔다리가 없음 (있는 것: {sorted(robot.limbs)})"
+            )
+        return legs
+
+    names = [n.strip() for n in name.split(",") if n.strip()]
+    duplicate = {n for n in names if names.count(n) > 1}
+    if duplicate:
+        raise SystemExit(
+            f"팔다리 이름이 겹침 {sorted(duplicate)}. 같은 버스를 두 번 열게 됨"
+        )
+    return [_pick_limb(robot, n) for n in names]
+
+
 def _by_id(limb: LimbConfig) -> Dict[int, str]:
     return {motor.id: name for name, motor in limb.motors.items()}
 

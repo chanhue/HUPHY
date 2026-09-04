@@ -14,6 +14,19 @@ scripts/
 
 `--limb` 은 팔다리가 둘 이상이면 필수임. 팔다리마다 CAN 채널이 다름.
 
+`huphy-test` 는 여럿을 한 번에 받음.
+
+```bash
+huphy-test --limb all zero                # kind: leg 인 팔다리 전부
+huphy-test --limb left_leg,right_leg zero # 적은 순서대로
+```
+
+프로세스를 둘 띄우는 것과 다름 — 명령이 같은 주기에 나가고, 한쪽 통신이 끊기면
+**양쪽이 같이** 멈춤. 따로 띄우면 한쪽이 죽어도 다른 쪽은 계속 움직여 넘어짐.
+
+나머지 진입점은 팔다리 하나만 받음. `commission` 은 사람이 한 다리를 손으로
+만지는 절차이고, `bringup` 은 관절 하나씩 확인하는 화면이라 묶을 이유가 없음.
+
 ---
 
 ## `commission.py`

@@ -17,6 +17,9 @@ import types
 from collections import deque
 
 import pytest
+from dataclasses import replace
+
+from huphy.config import load_robot
 
 from huphy.motors.robstride import tables as T
 from huphy.motors.robstride.codec import mit
@@ -650,3 +653,49 @@ class TestSweepNeedsSomewhereToSave:
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
         with pytest.raises(SystemExit, match="저장할 데가 없음"):
             run("--limb", "left_leg", "sweep", "knee")
+
+
+# ===========================================================================
+# 팔다리 여럿 고르기
+# ===========================================================================
+class TestPickLimbs:
+    def test_all_takes_every_leg(self, cfg):
+        robot = load_robot(cfg)
+        assert [l.name for l in commission._pick_limbs(robot, "all")] == [
+            "right_leg", "left_leg"
+        ]
+
+    def test_a_single_name_still_gives_a_list(self, cfg):
+        robot = load_robot(cfg)
+        assert [l.name for l in commission._pick_limbs(robot, "right_leg")] == [
+            "right_leg"
+        ]
+
+    def test_commas_keep_the_written_order(self, cfg):
+        """순서가 관절 이름 순서와 텔레메트리 열 순서를 정함."""
+        robot = load_robot(cfg)
+        picked = commission._pick_limbs(robot, "left_leg,right_leg")
+        assert [l.name for l in picked] == ["left_leg", "right_leg"]
+
+    def test_a_repeat_is_an_error(self, cfg):
+        """같은 버스를 두 번 열게 됨."""
+        robot = load_robot(cfg)
+        with pytest.raises(SystemExit, match="겹침"):
+            commission._pick_limbs(robot, "right_leg,right_leg")
+
+    def test_an_unknown_name_is_an_error(self, cfg):
+        robot = load_robot(cfg)
+        with pytest.raises(SystemExit):
+            commission._pick_limbs(robot, "middle_leg")
+
+    def test_omitting_it_still_needs_one_limb(self, cfg):
+        """팔다리마다 채널이 달라 잘못 고르면 엉뚱한 쪽이 움직임."""
+        robot = load_robot(cfg)
+        with pytest.raises(SystemExit, match="--limb"):
+            commission._pick_limbs(robot, None)
+
+    def test_all_with_no_legs_is_an_error(self, cfg):
+        robot = load_robot(cfg)
+        arms = {n: replace(l, kind="arm") for n, l in robot.limbs.items()}
+        with pytest.raises(SystemExit, match="kind: leg"):
+            commission._pick_limbs(replace(robot, limbs=arms), "all")
