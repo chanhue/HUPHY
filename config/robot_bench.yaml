@@ -1,0 +1,46 @@
+# 벤치 구성 — 모터 두 대짜리 왼다리. **robot_v1.0.yaml 의 벤치판임.**
+#
+# 실물은 knee(RS04, id 4)와 ankle_a(RS03, id 5) 둘뿐이고 나머지 넷은 아직 없음.
+# 그래도 여섯을 다 적는 이유: `robots/leg.py` 의 REQUIRED_MOTORS 가 여섯을 요구함.
+# 빠뜨리면 "다리에 필요한 모터가 없음" 으로 조립 자체가 안 됨. 없는 넷은 응답이
+# 없을 뿐이고, 그 사실은 텔레메트리의 ack/miss 에 그대로 드러남 -- 숨기지 않음.
+#
+# v1.0 과 다른 곳은 네 군데뿐임. 그 외 값(모터 id·모델·게인)은 v1.0 그대로라
+# 벤치에서 맞춘 것이 실물에 그대로 올라감.
+#
+#   1. left_leg 만 있음        양다리 설정이면 build_biped 가 없는 다리까지 세움
+#   2. channel/interface       벤치는 CANable(slcan)을 slcand 로 can0 에 올려 씀
+#   3. link_loss_cycles: 0     없는 모터 넷이 매 주기 응답을 빠뜨림. 5 로 두면
+#                              통신 끊김으로 판정해 곧바로 로봇을 세움 (control/loop.py)
+#   4. enforce_limits: false   calibration/left_leg_v1.0.json 이 아직 실측 전이라
+#                              limits_deg 가 전부 null 임. 커미셔닝(sweep+zero)을
+#                              마치면 이 줄을 지우고 v1.0 과 같은 true 로 돌릴 것
+#
+# 각도는 전부 cal 공간임 -- 관절 각도이지 모터가 보고하는 raw 값이 아님.
+name: huphy_bench
+safety:
+  command_margin_deg: 3.0
+  max_delta_deg: 50.0
+  enforce_limits: false     # 커미셔닝 전용. 실측 끝나면 true 로
+  link_loss_cycles: 0       # 없는 모터 넷 때문에 켜 두면 즉시 정지함
+telemetry:
+  host: 192.168.20.177      # pygviewer 브리지가 받는 주소
+  port: 9870
+  csv_path: null
+  csv_flush_every: 50
+imus: {}                    # 벤치에는 아직 안 물림
+limbs:
+  left_leg:
+    kind: leg
+    side: left
+    channel: can0           # sudo slcand -o -c -s8 /dev/ttyACM0 can0 && sudo ip link set can0 up
+    interface: socketcan
+    control_hz: 100.0
+    calibration: calibration/left_leg_v1.0.json
+    motors:
+      hip_pitch: {id: 1,  model: RS04, kp: 10.0, kd: 1.0}   # 없음
+      hip_roll:  {id: 2,  model: RS04, kp: 10.0, kd: 1.0}   # 없음
+      hip_yaw:   {id: 3,  model: RS03, kp: 10.0, kd: 1.0}   # 없음
+      knee:      {id: 4,  model: RS04, kp: 10.0, kd: 1.0}   # 실물 (2026-09-04 육안 확인)
+      ankle_a:   {id: 5,  model: RS03, kp: 10.0, kd: 1.0}   # 실물 (2026-09-04 육안 확인)
+      ankle_b:   {id: 6,  model: RS03, kp: 10.0, kd: 1.0}   # 없음
