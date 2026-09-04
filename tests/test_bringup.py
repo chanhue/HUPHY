@@ -9,6 +9,7 @@
 """
 
 import json
+from dataclasses import replace
 import math
 import sys
 import types
@@ -20,6 +21,7 @@ from huphy.control import ControlLoop, Mode
 from huphy.motors.robstride import tables as T
 from huphy.motors.robstride.codec import mit
 from huphy.scripts import bringup
+from huphy.config import ConfigError, load_robot
 from huphy.sensors import registry
 
 MODELS = {7: T.Model.RS02, 8: T.Model.RS02, 9: T.Model.RS02,
@@ -543,3 +545,76 @@ class TestImuOnTheLeg:
         code = bringup.main(["--config", str(imu_cfg), "--limb", "right_leg"])
         assert code == 0
         assert "knee" in capsys.readouterr().out
+
+
+# ===========================================================================
+# 로봇 전체 조립
+# ===========================================================================
+class TestBuildBiped:
+    def test_it_takes_every_leg(self, cfg):
+        robot = load_robot(cfg)
+        biped = bringup.build_biped(robot)
+        assert [p.id for p in biped.parts] == ["right_leg", "left_leg"]
+
+    def test_joint_names_carry_the_limb(self, cfg):
+        biped = bringup.build_biped(load_robot(cfg))
+        assert "right_leg/knee" in biped.joint_names
+        assert "left_leg/knee" in biped.joint_names
+
+    def test_each_leg_keeps_its_own_channel(self, cfg):
+        """팔다리마다 CAN 채널이 다름. 섞이면 엉뚱한 쪽이 움직임."""
+        biped = bringup.build_biped(load_robot(cfg))
+        assert [p.config.channel for p in biped.parts] == ["can1", "can0"]
+
+    def test_the_reader_thread_is_on(self, cfg):
+        """버스가 둘이면 순차 수거의 총 대기가 두 배가 됨."""
+        biped = bringup.build_biped(load_robot(cfg))
+        assert all(p.bus.bus.use_reader for p in biped.parts)
+
+    def test_the_robot_id_comes_from_the_config(self, cfg):
+        assert bringup.build_biped(load_robot(cfg)).id == "t"
+
+    def test_safety_is_shared(self, cfg):
+        robot = load_robot(cfg)
+        biped = bringup.build_biped(robot)
+        assert biped.safety == robot.safety
+        assert all(p.safety == robot.safety for p in biped.parts)
+
+    def test_explicit_limbs_win(self, cfg):
+        robot = load_robot(cfg)
+        biped = bringup.build_biped(robot, [robot.limb("left_leg")])
+        assert [p.id for p in biped.parts] == ["left_leg"]
+
+    def test_no_legs_is_an_error(self, cfg):
+        robot = load_robot(cfg)
+        arms = {n: replace(l, kind="arm") for n, l in robot.limbs.items()}
+        with pytest.raises(ConfigError, match="kind: leg"):
+            bringup.build_biped(replace(robot, limbs=arms))
+
+    def test_options_reach_every_leg(self, cfg):
+        """게인 스케일 같은 것이 양다리에 같이 걸려야 함."""
+        biped = bringup.build_biped(load_robot(cfg), gain_scale=0.5)
+        knee = biped.part("right_leg").config.motors["knee"]
+        assert knee.gains.kp == 15.0
+
+    def test_the_robot_owns_the_imus(self, imu_cfg, monkeypatch):
+        """몸통 센서는 어느 다리의 것도 아님."""
+        monkeypatch.setattr(registry, "make_imu", lambda c: FakeImu(c.name))
+        biped = bringup.build_biped(load_robot(imu_cfg))
+
+        assert biped.imus.names == ("main",)
+        assert all(len(p.imus) == 0 for p in biped.parts)
+
+    def test_leg_build_still_attaches_its_own(self, imu_cfg, monkeypatch):
+        """다리 하나만 돌릴 때는 그 다리가 자기 센서를 들고 있음."""
+        monkeypatch.setattr(registry, "make_imu", lambda c: FakeImu(c.name))
+        robot = load_robot(imu_cfg)
+        leg = bringup.build_leg(robot, robot.limb("right_leg"))
+
+        assert len(leg.imus) == 1
+
+    def test_a_single_leg_has_no_reader(self, cfg):
+        """기다릴 버스가 하나뿐이라 얻는 것이 없음."""
+        robot = load_robot(cfg)
+        leg = bringup.build_leg(robot, robot.limb("right_leg"))
+        assert not leg.bus.bus.use_reader

@@ -41,7 +41,7 @@ import signal
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .. import calibration as calib
 from .. import telemetry as tele
@@ -52,6 +52,7 @@ from ..kinematics.ankle import AnkleGeometry, AnkleKinematics
 from ..motors.base import Gains
 from ..motors.canbus import CanBus
 from ..motors.robstride.bus import RobStrideBus
+from ..robots.biped import Biped
 from ..robots.leg import ANKLE_JOINTS, SINGLE_JOINTS, Leg
 from ..sensors import make_imus
 from . import table
@@ -77,6 +78,8 @@ def build_leg(
     ankle_output: str = "position",
     ankle_kp: Tuple[float, float] = (0.0, 0.0),
     ankle_kd: Tuple[float, float] = (0.0, 0.0),
+    reader: bool = False,
+    imus: Optional[List[object]] = None,
 ) -> Leg:
     """설정에서 다리 하나를 만듦.
 
@@ -93,6 +96,12 @@ def build_leg(
 
     발목 기구학은 **왼쪽이면 거울상**을 씀. 같은 관절 명령에 양다리가 같은 물리
     동작을 하려면 필요함 (이슈 #13 -- 거울상은 실측이 아니라 가정임).
+
+    `reader` 를 켜면 이 다리의 CAN 채널에 수신 스레드가 붙음. 버스가 하나면 얻는
+    것이 없어 기본은 꺼져 있고, 양다리를 묶을 때 켬.
+
+    `imus` 를 주면 그것을 씀. 빈 목록을 주면 **센서를 안 붙임** -- 로봇 전체가
+    들고 있을 때임 (`build_biped`).
     """
     if gains is not None:
         limb = replace(
@@ -117,7 +126,8 @@ def build_leg(
         geometry = geometry.mirrored()
 
     bus = RobStrideBus(
-        CanBus(limb.channel, interface=limb.interface), limb.motors_by_id()
+        CanBus(limb.channel, interface=limb.interface, reader=reader),
+        limb.motors_by_id(),
     )
     return Leg(
         limb,
@@ -125,10 +135,50 @@ def build_leg(
         safety=robot.safety,
         kinematics=AnkleKinematics(geometry),
         allow_uncalibrated=allow_uncalibrated,
-        imus=_imus_on(robot, limb),
+        imus=_imus_on(robot, limb) if imus is None else imus,
         ankle_output=ankle_output,
         ankle_kp=ankle_kp,
         ankle_kd=ankle_kd,
+    )
+
+
+def build_biped(
+    robot: RobotConfig,
+    limbs: Optional[Sequence[LimbConfig]] = None,
+    **leg_options,
+) -> Biped:
+    """설정에서 **로봇 전체**를 만듦. 팔다리를 다 세우고 하나로 묶음.
+
+    `limbs` 를 생략하면 `kind: leg` 인 팔다리를 전부 씀. 순서는 설정에 적힌
+    순서임 -- 관절 이름과 텔레메트리 열 순서가 그 순서를 따름.
+
+    `build_leg` 과 다른 점 셋.
+
+        수신 스레드    켬. 버스가 둘이면 순차 수거의 총 대기가 두 배가 됨
+        IMU           다리가 아니라 로봇이 들고 있음
+        안전 설정      로봇 것을 Biped 도 같이 들고 있음
+
+    IMU 를 다리에서 떼는 이유: 몸통 센서는 어느 다리의 것도 아니고, 다리 센서를
+    몸통으로 옮길 때 소유자가 바뀌면 안 됨. 값을 찾는 쪽은 개체 이름만 알면 되므로
+    (`imu/main/gx`) 어디에 달렸는지는 `mount` 메모로만 남음.
+
+    나머지 인자는 `build_leg` 에 그대로 넘어감 -- 게인 스케일 등이 양다리에 같이
+    걸림.
+    """
+    chosen = list(limbs) if limbs is not None else list(robot.limbs_of_kind("leg").values())
+    if not chosen:
+        raise ConfigError(
+            f"kind: leg 인 팔다리가 없음 (있는 것: {sorted(robot.limbs)}). "
+            f"robot.yaml 의 limbs 를 확인할 것"
+        )
+
+    leg_options.setdefault("reader", True)
+    legs = [build_leg(robot, limb, imus=[], **leg_options) for limb in chosen]
+    return Biped(
+        legs,
+        id=robot.name,
+        safety=robot.safety,
+        imus=make_imus(robot.imus.values()),
     )
 
 

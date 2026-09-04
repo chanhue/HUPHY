@@ -525,3 +525,32 @@ PYTHONPATH=src python3 -m pytest tests/test_commission_cli.py tests/test_bringup
 
 `commission` 71개, `bringup` 30개, `selftest` 27개. 가짜 모터가 붙은 가짜 CAN 버스에
 대고 명령줄과 메뉴를 그대로 돌림. 설정 파일은 임시 폴더에 만들어 씀.
+
+---
+
+## 조립 함수 — `bringup.build_leg` / `bringup.build_biped`
+
+설정을 실행 객체로 바꾸는 곳. 진입점 넷이 전부 이 둘 중 하나를 씀.
+
+```python
+build_leg(robot, limb)      # 다리 하나.       ControlLoop 에 그대로 들어감
+build_biped(robot)          # 로봇 전체.       kind: leg 인 팔다리를 전부
+```
+
+둘 다 `Robot` 계약을 채우므로 제어 루프 입장에서는 차이가 없음.
+
+### `build_biped` 가 다르게 하는 것
+
+| | 왜 |
+|---|---|
+| 수신 스레드를 켬 | 버스가 둘이면 순차 수거의 총 대기가 두 배가 됨 |
+| IMU 를 다리에 안 붙임 | 로봇이 들고 있음. 몸통 센서는 어느 다리의 것도 아님 |
+| 관절 이름에 팔다리가 붙음 | `right_leg/knee`. 무릎이 둘이라 구분이 필요함 |
+
+나머지 인자(`gain_scale` 등)는 `build_leg` 로 그대로 넘어가 **양다리에 같이**
+걸림.
+
+### 순서가 곧 열 순서임
+
+`limbs` 를 생략하면 `robot.yaml` 에 적힌 순서를 씀. 그 순서가 관절 이름 순서와
+텔레메트리 열 순서를 정하므로, 설정에서 다리 순서를 바꾸면 로그 열 순서도 바뀜.
