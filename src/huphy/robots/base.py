@@ -50,6 +50,17 @@ Action = Mapping[str, float]
 Observation = Dict[str, Any]
 """필드 이름 -> 값. 구조는 `observation_features` 와 같음."""
 
+Commands = Mapping[Any, Any]
+"""계산된 명령 꾸러미. **모양은 로봇이 정함** — `send()` 만 읽음.
+
+    다리 하나      {모터 id: MitCommand}
+    합성 로봇      {팔다리 이름: {모터 id: MitCommand}}
+
+모터 id 를 한 사전에 몰지 않는 이유: id 는 **버스 안에서만** 유일함. 팔다리마다
+채널이 따로라 왼다리 10번과 오른다리 10번이 동시에 있을 수 있고, 한 사전에 담으면
+한쪽이 조용히 덮임.
+"""
+
 
 class Robot(abc.ABC):
     """관절 이름으로 말하는 로봇 하나.
@@ -140,23 +151,28 @@ class Robot(abc.ABC):
 
     # ---- 명령 -------------------------------------------------------------
     @abc.abstractmethod
-    def build_commands(self, action: Action) -> Dict[int, Any]:
+    def build_commands(self, action: Action) -> Commands:
         """명령을 계산함. **CAN 을 쓰지 않음.**
 
-        반환: 모터 id -> 벤더 명령. 무엇이 잘렸는지는 로봇의 카운터에 쌓임.
+        반환은 `send()` 에 그대로 넘기는 꾸러미임 (`Commands`). 무엇이 잘렸는지는
+        로봇의 카운터에 쌓임.
         """
 
     @abc.abstractmethod
-    def send(self, commands: Mapping[int, Any]) -> int:
+    def send(self, commands: Commands) -> int:
         """계산된 명령을 보냄. **수거하지 않음.** 보낸 개수를 반환함."""
 
     @abc.abstractmethod
-    def collect(self) -> Tuple[int, ...]:
-        """응답을 수거해 상태를 갱신함. **응답이 없었던 모터 id** 를 반환함."""
+    def collect(self) -> Tuple[Any, ...]:
+        """응답을 수거해 상태를 갱신함. **응답이 없었던 모터** 를 반환함.
+
+        다리 하나는 모터 id, 합성 로봇은 `팔다리/모터id` 문자열임 — id 만으로는
+        어느 다리인지 갈리지 않음.
+        """
 
     @abc.abstractmethod
-    def refresh(self) -> Tuple[int, ...]:
-        """명령하지 않고 상태만 읽음. 응답이 없었던 모터 id 를 반환함.
+    def refresh(self) -> Tuple[Any, ...]:
+        """명령하지 않고 상태만 읽음. 응답이 없었던 모터를 반환함.
 
         **읽기 전용 통신이 아닐 수 있음.** MIT 프로토콜에는 상태 읽기 명령이 따로
         없어서, 힘이 나가지 않는 명령을 보내고 그 응답을 받는 방식임.
