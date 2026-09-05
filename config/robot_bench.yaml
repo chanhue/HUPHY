@@ -34,7 +34,27 @@ telemetry:
   port: 9870
   csv_path: null
   csv_flush_every: 50
-imus: {}                    # 벤치에는 아직 안 물림
+imus:
+  # 2026-09-06: 벤치에 EBIMU 한 개 물림. 읽기만 해서 확인한 값 (huphy-imu apply 안 돌림 --
+  # apply 는 센서 비휘발성 메모리를 바꾸고 전원을 껐다 켜도 남음):
+  #
+  #   초당 100줄, 줄당 15개 항목  = quat 4 + gyro 3 + accel 3 + dist 3 + temp 1 + time 1
+  #   사원수 크기 1.000        -> 자세 정상
+  #   가속도 크기 1.001 g      -> 중력 포함이 맞음 (accel_mode: gravity)
+  #   가만히 둔 상태 각속도 0.00 -> 영점 정상
+  #
+  # 즉 센서가 이미 아래 output 그대로 보내고 있어 apply 가 필요 없음.
+  main:
+    model: ebimu
+    # udev 심볼릭 링크(/dev/ebimu)는 이 컴퓨터에 아직 없음. by-id 경로는 USB 포트를 바꿔
+    # 꽂아도 같은 이름이라 ttyUSB 번호보다 안전함 -- ttyUSB 번호는 꽂는 순서대로 붙음.
+    port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+    # 다리가 아직 없어 책상에 놓여 있음. 다리에 붙이면 이 한 줄만 바꾸면 됨.
+    mount: left_leg
+    output: [quat, gyro, accel, dist, temp, time]
+    accel_mode: gravity
+    dist_mode: local
+    rate_hz: 100
 limbs:
   left_leg:
     kind: leg
