@@ -193,6 +193,19 @@ class TestDecodeState:
         assert math.radians(vel) == pytest.approx(-2.0, abs=0.05)
         assert tau == pytest.approx(-5.0, abs=0.02)
 
+    def test_bench_temperature_high_nibble_2026_09_05(self):
+        """실측 회귀 시험 — 온도 칸의 상위 4비트는 온도가 아님.
+
+        같은 모터·같은 순간에 수신기 경로는 0x814A(3309.8도), 커미셔닝 경로는
+        0x014A(33.0도)를 냈음. 0x214A(852.2도)도 관측됨. 셋 다 하위 12비트가
+        0x14A = 330 = 33.0도로 같음. 상위 4비트를 포함해 읽으면 방 온도로
+        설명되지 않는 값이 나오고, 33도짜리 모터가 과열로 차단됨.
+        """
+        for high in (0x0, 0x2, 0x8):
+            data = bytes([4, 0, 0, 0, 0, 0, (high << 4) | 0x1, 0x4A])
+            *_, temp = mit.decode_state(data, enc=RS02)
+            assert temp == pytest.approx(33.0), f"상위 니블 0x{high:X}"
+
     def test_rejects_short_frame(self):
         with pytest.raises(ValueError, match="8바이트"):
             mit.decode_state(bytes([1, 2, 3]), enc=RS02)
@@ -216,18 +229,30 @@ class TestDecodeFault:
         assert word == 0
 
     def test_bit_extraction(self):
-        """bit0 = 과열."""
-        mid, word = mit.decode_fault(bytes([10, 0x00, 0x00, 0x00, 0x01, 0, 0, 0]))
+        """bit0 = 과열. 고장값은 리틀 엔디안이라 data[1] 이 최하위 바이트임."""
+        mid, word = mit.decode_fault(bytes([10, 0x01, 0x00, 0x00, 0x00, 0, 0, 0]))
         assert mid == 10
         assert word & (1 << T.FAULT_BITS["overtemperature"])
 
     def test_high_bit(self):
-        """bit14 = 스톨/과부하. 상위 바이트에 실림."""
+        """bit14 = 스톨/과부하. 리틀 엔디안이라 두 번째 바이트에 실림."""
         word = 1 << T.FAULT_BITS["stall_overload"]
-        data = bytes([10, (word >> 24) & 0xFF, (word >> 16) & 0xFF,
-                      (word >> 8) & 0xFF, word & 0xFF, 0, 0, 0])
+        data = bytes([10]) + word.to_bytes(4, "little") + bytes(3)
         _, decoded = mit.decode_fault(data)
         assert decoded & (1 << T.FAULT_BITS["stall_overload"])
+
+    def test_bench_overvoltage_frame_2026_09_05(self):
+        """실측 회귀 시험 — 벤치에서 두 모터가 동시에 멈췄을 때 실제로 온 바이트.
+
+        빅 엔디안으로 읽으면 0x08000000(비트 27, 매뉴얼에 없는 값)이 되어 무슨 고장인지
+        알 수 없었음. 리틀 엔디안으로 읽어야 비트 3 = 과전압이 나오고, 두 모터가 한 전원에서
+        동시에 감속한 상황과도 맞음. 벤더 공식 SDK 도 같은 프레임을
+        ``struct.unpack("<LL", data)`` 로 읽음.
+        """
+        _, word = mit.decode_fault(bytes([4, 0x08, 0x00, 0x00, 0x00, 0, 0, 0]))
+        assert word == 0x00000008
+        assert word & (1 << T.FAULT_BITS["overvoltage"])
+        assert not word & (1 << T.FAULT_BITS["stall_overload"])
 
     def test_rejects_short_frame(self):
         with pytest.raises(ValueError, match="5바이트"):
