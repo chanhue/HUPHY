@@ -104,9 +104,9 @@ class FakeBus:
         d = msg.data
         if d[0] == 0xFF and d[7] == T.CMD_FAULT and d[6] == T.F_CMD_FAULT_QUERY:
             word = FakeBus.faults.get(mid, 0)
-            self.rx.append(FakeMessage(mid, bytes([
-                mid, (word >> 24) & 0xFF, (word >> 16) & 0xFF,
-                (word >> 8) & 0xFF, word & 0xFF, 0, 0, 0,
+            self.rx.append(FakeMessage(mid, bytes([          # 작은 자리 먼저 (6.7절)
+                mid, word & 0xFF, (word >> 8) & 0xFF,
+                (word >> 16) & 0xFF, (word >> 24) & 0xFF, 0, 0, 0,
             ])))
             return
         if d[0] != 0xFF:                        # MIT 명령이면 목표를 따라감
